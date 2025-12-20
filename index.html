@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover" />
+    <title>🎮 Zombie Arena - Multiplayer Shooter</title>
+    <meta name="description" content="A fun multiplayer top-down zombie shooter game with PvP modes!" />
+    
+    <!-- PWA Support -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Zombie Arena" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Noto+Sans+TC:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+      /* Prevent ALL text selection and mobile browser behaviors */
+      * {
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      input, textarea {
+        -webkit-user-select: text;
+        -moz-user-select: text;
+        -ms-user-select: text;
+        user-select: text;
+      }
+      body {
+        font-family: 'Noto Sans TC', sans-serif;
+        background-color: #0f172a;
+        overflow: hidden;
+        touch-action: none;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        -webkit-overflow-scrolling: touch;
+      }
+      .pixel-font {
+        font-family: 'Press Start 2P', cursive;
+      }
+      /* Custom scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #111;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #444;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #666;
+      }
+      /* Ensure full height on mobile */
+      html, body, #root {
+        height: 100%;
+        height: 100dvh;
+        overscroll-behavior: none;
+      }
+      /* Disable context menu on mobile */
+      canvas {
+        touch-action: none;
+        -webkit-touch-callout: none;
+      }
+    </style>
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
+  </body>
+</html>
