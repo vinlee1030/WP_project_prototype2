@@ -28,7 +28,7 @@ export interface Weapon {
 }
 
 // Game Modes
-export type GameMode = 'ZOMBIE_SURVIVAL' | 'TEAM_DEATHMATCH' | 'GEM_GRAB' | 'BRAWL_BALL';
+export type GameMode = 'ZOMBIE_SURVIVAL' | 'TEAM_DEATHMATCH' | 'GEM_GRAB' | 'BRAWL_BALL' | 'GUN_GAME';
 
 // Team colors for PvP modes
 export type Team = 'RED' | 'BLUE' | 'NONE';
@@ -64,6 +64,7 @@ export interface Player {
   blurredUntil: number; // Blurred by smoke zombie
   stunnedUntil: number; // Stunned by charger (can't move or shoot)
   slimeCoveredUntil: number; // Covered in slime by boomer (blurry sticky effect)
+  burningUntil: number; // On fire from fire boss (burn damage over time)
   tongueGrabbedBy: string | null; // ID of witch grabbing player with tongue
   waveSurvived: number;
   gems: number;
@@ -76,10 +77,19 @@ export interface Player {
   fireRateMultiplier: number;
   ammoMultiplier: number;
   inBush: boolean; // Hidden in bush (for PvP modes)
+  bushEnterTime: number; // When player entered bush (for complete invisibility after 1.5s)
   shield: number; // Shield HP (absorbs damage before health)
   maxShield: number;
   fireRateBoostUntil: number; // Fire rate boost timer
   wallKits: number; // Number of wall kits to build asylum walls
+  // Gun Game mode
+  gunGameRank: number; // Current weapon rank in Gun Game mode
+  gunGameKillsAtRank: number; // Kills with current weapon
+  killStreak: number; // Current kill streak for banners
+  lastKillTime: number; // For tracking kill streaks
+  // Reloading
+  reloading: boolean; // Is the player currently reloading
+  reloadStartTime: number; // When the reload started
 }
 
 export interface Zombie {
@@ -250,9 +260,13 @@ export interface GameState {
   lastGoalScorer?: string; // Player who scored
   // Announcements system
   announcements: Announcement[];
+  // Gun Game mode
+  gunGameWeaponOrder?: WeaponType[]; // Randomized weapon order for this match
+  gunGameWinner?: string; // Player ID who won
   // Game end
   gameOver: boolean;
   winnerTeam?: Team;
+  winnerName?: string; // For Gun Game
   survivalTime: number;
   showEndScreen: boolean;
   endScreenStartTime: number;
@@ -324,9 +338,9 @@ export const PLAYER_SPEED = 4.2;
 export const ITEM_RADIUS = 14; // Slightly smaller
 export const BALL_RADIUS = 16; // Slightly smaller
 export const WAVE_REST_TIME = 8000; // 8 seconds
-export const MOBILE_ZOOM = 0.85; // Further reduced zoom for much bigger view
+export const MOBILE_ZOOM = 1.0; // Bigger characters, smaller field of view
 
-// Weapon Stats with unlock waves
+// Weapon Stats with unlock waves - REDUCED fire rates to prevent lag!
 export const WEAPON_STATS: Record<WeaponType, {
   maxAmmo: number;
   fireRate: number;
@@ -337,20 +351,25 @@ export const WEAPON_STATS: Record<WeaponType, {
   emoji: string;
   unlockWave: number;
   explosionRadius?: number;
+  reloadTime: number; // Time to reload in ms
 }> = {
-  PISTOL: { maxAmmo: -1, fireRate: 250, damage: 18, speed: 16, spread: 0.02, name: 'Pistol', emoji: '🔫', unlockWave: 1 },
-  SHOTGUN: { maxAmmo: 24, fireRate: 700, damage: 12, speed: 14, spread: 0.5, name: 'Shotgun', emoji: '💥', unlockWave: 1 },
-  RIFLE: { maxAmmo: 45, fireRate: 100, damage: 24, speed: 22, spread: 0.01, name: 'Rifle', emoji: '🎯', unlockWave: 2 },
-  MACHINE_GUN: { maxAmmo: 120, fireRate: 70, damage: 16, speed: 18, spread: 0.06, name: 'M-Gun', emoji: '⚡', unlockWave: 3 },
-  SNIPER: { maxAmmo: 12, fireRate: 900, damage: 100, speed: 30, spread: 0, name: 'Sniper', emoji: '🔭', unlockWave: 4 },
-  ROCKET: { maxAmmo: 10, fireRate: 800, damage: 200, speed: 16, spread: 0, name: 'Rocket', emoji: '🚀', unlockWave: 5, explosionRadius: 160 },
-  GRENADE: { maxAmmo: 12, fireRate: 500, damage: 120, speed: 10, spread: 0, name: 'Grenade', emoji: '💣', unlockWave: 4, explosionRadius: 150 },
-  FLAMETHROWER: { maxAmmo: 80, fireRate: 30, damage: 8, speed: 12, spread: 0.35, name: 'Flame', emoji: '🔥', unlockWave: 6 },
-  LASER: { maxAmmo: 30, fireRate: 150, damage: 45, speed: 40, spread: 0, name: 'Laser', emoji: '⚡', unlockWave: 7 },
-  MINIGUN: { maxAmmo: 200, fireRate: 50, damage: 18, speed: 20, spread: 0.08, name: 'Minigun', emoji: '🔥', unlockWave: 8 },
-  CHAINSAW: { maxAmmo: -1, fireRate: 150, damage: 30, speed: 0, spread: 0.4, name: 'Chainsaw', emoji: '🪚', unlockWave: 3 },
-  BAT: { maxAmmo: -1, fireRate: 900, damage: 40, speed: 0, spread: 0, name: 'Bat', emoji: '🏏', unlockWave: 2 },
-  LANDMINE: { maxAmmo: 6, fireRate: 800, damage: 150, speed: 0, spread: 0, name: 'Mine', emoji: '💣', unlockWave: 7, explosionRadius: 100 },
+  // EARLY GAME (Wave 1-3): Basic weapons only
+  PISTOL: { maxAmmo: -1, fireRate: 350, damage: 20, speed: 16, spread: 0.02, name: 'Pistol', emoji: '🔫', unlockWave: 1, reloadTime: 0 }, // Slower, more damage
+  SHOTGUN: { maxAmmo: 24, fireRate: 800, damage: 15, speed: 14, spread: 0.5, name: 'Shotgun', emoji: '💥', unlockWave: 1, reloadTime: 2000 },
+  RIFLE: { maxAmmo: 45, fireRate: 180, damage: 28, speed: 22, spread: 0.01, name: 'Rifle', emoji: '🎯', unlockWave: 2, reloadTime: 1500 }, // Slower, more damage
+  MACHINE_GUN: { maxAmmo: 120, fireRate: 120, damage: 18, speed: 18, spread: 0.06, name: 'M-Gun', emoji: '⚡', unlockWave: 3, reloadTime: 2500 }, // 70ms -> 120ms
+  // MELEE (Wave 4-5): Rare drops early - no reload
+  BAT: { maxAmmo: -1, fireRate: 700, damage: 50, speed: 0, spread: 0, name: 'Bat', emoji: '🏏', unlockWave: 4, reloadTime: 0 }, // Slightly faster, more damage
+  CHAINSAW: { maxAmmo: -1, fireRate: 200, damage: 40, speed: 0, spread: 0.4, name: 'Chainsaw', emoji: '🪚', unlockWave: 5, reloadTime: 0 }, // 150ms -> 200ms
+  // MID GAME (Wave 6-7): Sniper and Minigun
+  SNIPER: { maxAmmo: 12, fireRate: 1000, damage: 110, speed: 30, spread: 0, name: 'Sniper', emoji: '🔭', unlockWave: 6, reloadTime: 2200 },
+  MINIGUN: { maxAmmo: 200, fireRate: 100, damage: 20, speed: 20, spread: 0.08, name: 'Minigun', emoji: '🔥', unlockWave: 7, reloadTime: 3500 }, // 50ms -> 100ms
+  // LATE GAME (Wave 8-15): Advanced explosive & special weapons
+  GRENADE: { maxAmmo: 12, fireRate: 1000, damage: 130, speed: 10, spread: 0, name: 'Grenade', emoji: '💣', unlockWave: 8, explosionRadius: 150, reloadTime: 1000 }, // Slower fire for optimization
+  FLAMETHROWER: { maxAmmo: 80, fireRate: 120, damage: 12, speed: 12, spread: 0.35, name: 'Flame', emoji: '🔥', unlockWave: 9, reloadTime: 2000 }, // 80ms -> 120ms slower
+  LANDMINE: { maxAmmo: 6, fireRate: 1200, damage: 160, speed: 0, spread: 0, name: 'Mine', emoji: '💣', unlockWave: 10, explosionRadius: 100, reloadTime: 1500 }, // Slower
+  ROCKET: { maxAmmo: 10, fireRate: 1200, damage: 220, speed: 16, spread: 0, name: 'Rocket', emoji: '🚀', unlockWave: 12, explosionRadius: 160, reloadTime: 2500 }, // Slower for optimization
+  LASER: { maxAmmo: 30, fireRate: 200, damage: 50, speed: 40, spread: 0, name: 'Laser', emoji: '⚡', unlockWave: 15, reloadTime: 1800 }, // 150ms -> 200ms
 };
 
 // Zombie Types with visuals
@@ -369,16 +388,16 @@ export const ZOMBIE_TYPES: Record<ZombieType, {
 }> = {
   NORMAL: { hp: 60, speed: 2.0, color: '#5a7a5a', attackRange: 28, attackDamage: 12, name: 'Walker', size: 1, spawnWeight: 40, minWave: 1 },
   FAST: { hp: 35, speed: 3.2, color: '#7acc7a', attackRange: 35, attackDamage: 8, name: 'Runner', size: 0.85, spawnWeight: 20, minWave: 2 },
-  TANK: { hp: 300, speed: 1.0, color: '#4a4a6a', attackRange: 35, attackDamage: 30, name: 'Brute', size: 1.5, spawnWeight: 7, minWave: 3 }, // Reduced 30% (10->7)
+  TANK: { hp: 210, speed: 1.2, color: '#4a4a6a', attackRange: 35, attackDamage: 45, name: 'Brute', size: 1.5, spawnWeight: 7, minWave: 3 }, // 0.7x HP (300->210), faster, more damage, has JUMP!
   BOOMER: { hp: 120, speed: 1.4, color: '#88cc44', attackRange: 35, attackDamage: 15, name: 'Boomer', size: 1.5, spawnWeight: 10, minWave: 4 },
-  SPITTER: { hp: 50, speed: 1.2, color: '#8a6acc', attackRange: 225, attackDamage: 10, name: 'Spitter', size: 1, spawnWeight: 8, minWave: 5 },
+  SPITTER: { hp: 55, speed: 1.3, color: '#8a6acc', attackRange: 200, attackDamage: 12, name: 'Spitter', size: 1, spawnWeight: 10, minWave: 4 }, // 1.2x buffed
   SLOW: { hp: 80, speed: 2.2, color: '#6acccc', attackRange: 120, attackDamage: 15, name: 'Freezer', size: 1.1, spawnWeight: 12, minWave: 5 },
-  HEALER: { hp: 70, speed: 1.5, color: '#4aff4a', attackRange: 150, attackDamage: 5, name: 'Healer', size: 1.0, spawnWeight: 8, minWave: 6 },
-  CHARGER: { hp: 200, speed: 2.2, color: '#ff6a4a', attackRange: 40, attackDamage: 40, name: 'Charger', size: 1.4, spawnWeight: 8, minWave: 7 }, // 20% faster (1.8->2.2)
+  HEALER: { hp: 90, speed: 1.8, color: '#4aff4a', attackRange: 200, attackDamage: 5, name: 'Healer', size: 1.1, spawnWeight: 10, minWave: 5 }, // Stronger, faster, earlier spawn
+  CHARGER: { hp: 200, speed: 2.2, color: '#ff6a4a', attackRange: 40, attackDamage: 40, name: 'Charger', size: 1.4, spawnWeight: 8, minWave: 7 },
   SMOKE: { hp: 60, speed: 2.2, color: '#666666', attackRange: 100, attackDamage: 10, name: 'Smoke', size: 1.1, spawnWeight: 6, minWave: 8 },
-  BOSS: { hp: 1000, speed: 1.44, color: '#cc4a4a', attackRange: 45, attackDamage: 60, name: 'BOSS', size: 2.5, spawnWeight: 0, minWave: 5 }, // 20% faster (1.2->1.44)
-  FLAME_BOSS: { hp: 1500, speed: 1.2, color: '#ff4400', attackRange: 200, attackDamage: 40, name: 'Inferno', size: 2.8, spawnWeight: 0, minWave: 8 }, // 20% faster (1.0->1.2)
-  WITCH: { hp: 800, speed: 3.5, color: '#8844aa', attackRange: 250, attackDamage: 25, name: 'Witch', size: 1.8, spawnWeight: 0, minWave: 10 }, // Fast spider-like boss with tongue!
+  BOSS: { hp: 800, speed: 1.6, color: '#cc4a4a', attackRange: 60, attackDamage: 70, name: 'BOSS', size: 2.5, spawnWeight: 0, minWave: 5 }, // Less HP but has JUMP attack!
+  FLAME_BOSS: { hp: 1200, speed: 1.3, color: '#ff4400', attackRange: 200, attackDamage: 40, name: 'Inferno', size: 2.8, spawnWeight: 0, minWave: 8 },
+  WITCH: { hp: 600, speed: 2.5, color: '#8844aa', attackRange: 150, attackDamage: 20, name: 'Witch', size: 1.8, spawnWeight: 0, minWave: 10 }, // Nerfed: slower, shorter range
 };
 
 // Team Colors

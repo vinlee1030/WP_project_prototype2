@@ -9,6 +9,8 @@ import { audioService } from './audioService';
 
 const uuid = () => Math.random().toString(36).substr(2, 9);
 const MAX_ITEMS = 30;
+const MAX_BULLETS = 100; // Prevent lag from too many bullets
+const MAX_PARTICLES = 200; // Limit particles for performance
 
 // Helper to apply damage with shield absorption
 const applyDamage = (player: Player, damage: number, now: number, respawnTime: number = 2500): boolean => {
@@ -36,17 +38,18 @@ const applyDamage = (player: Player, damage: number, now: number, respawnTime: n
   return false;
 };
 
-// Helper to add announcement
+// Helper to add announcement - ONLY ONE AT A TIME, replaces previous!
 const addAnnouncement = (announcements: Announcement[], text: string, color: string = '#ffffff', duration: number = 3000): Announcement[] => {
   const newAnn: Announcement = { id: uuid(), text, color, startTime: Date.now(), duration };
-  return [...announcements.slice(-4), newAnn]; // Keep only last 5 announcements
+  // Only keep the newest announcement - no stacking!
+  return [newAnn];
 };
 
-// Knockback values per weapon
+// Knockback values per weapon - BUFFED shotgun and bat!
 const KNOCKBACK: Record<WeaponType, number> = {
-  PISTOL: 3, SHOTGUN: 8, RIFLE: 4, MACHINE_GUN: 2, SNIPER: 12,
+  PISTOL: 3, SHOTGUN: 18, RIFLE: 4, MACHINE_GUN: 2, SNIPER: 12, // Shotgun: 8 -> 18
   ROCKET: 15, GRENADE: 20, FLAMETHROWER: 1, LASER: 6, MINIGUN: 3,
-  CHAINSAW: 3, BAT: 45, // Bat has MASSIVE knockback!
+  CHAINSAW: 5, BAT: 65, // Bat: 45 -> 65 HUGE knockback!
   LANDMINE: 30 // Explosion knockback
 };
 
@@ -61,12 +64,16 @@ const getDifficultyMultipliers = (difficulty: 'EASY' | 'NORMAL' | 'HARD' | 'NIGH
   }
 };
 
-// Wave progression bonuses: +10% max HP/ammo, +5% fire rate per wave
+// Wave progression bonuses: CAPPED to prevent crazy scaling
+const MAX_WAVE_BONUS = 2.5; // Cap at 2.5x max stats
 const getWaveBonus = (wave: number) => ({
-  hpBonus: 1 + (wave - 1) * 0.10,        // +10% max HP per wave
-  ammoBonus: 1 + (wave - 1) * 0.10,      // +10% max ammo per wave  
-  fireRateBonus: 1 + (wave - 1) * 0.05   // +5% faster fire rate per wave (lower fireRate = faster)
+  hpBonus: Math.min(MAX_WAVE_BONUS, 1 + (wave - 1) * 0.08),        // +8% max HP per wave, capped
+  ammoBonus: Math.min(MAX_WAVE_BONUS, 1 + (wave - 1) * 0.06),      // +6% max ammo per wave, capped
+  fireRateBonus: Math.min(1.5, 1 + (wave - 1) * 0.03)              // +3% faster fire rate, capped at 1.5x
 });
+
+// Maximum mines allowed on map (FIFO - oldest explodes when limit exceeded)
+const MAX_MINES = 12;
 
 function xmur3(str: string) {
   let h = 1779033703 ^ str.length;
@@ -100,74 +107,170 @@ const generateMap = (roomId: string, mode: GameMode): Wall[] => {
   walls.push({ x: -50, y: 0, w: 50, h: MAP_SIZE, type: 'SOLID' });
   walls.push({ x: MAP_SIZE, y: 0, w: 50, h: MAP_SIZE, type: 'SOLID' });
   
+  // PvP modes: SYMMETRIC, interesting maps!
   if (mode === 'BRAWL_BALL') {
     const cx = MAP_SIZE / 2, cy = MAP_SIZE / 2;
-    walls.push({ x: 0, y: 0, w: 50, h: cy - 100, type: 'SOLID' });
-    walls.push({ x: 0, y: cy + 100, w: 50, h: cy - 100, type: 'SOLID' });
-    walls.push({ x: MAP_SIZE - 50, y: 0, w: 50, h: cy - 100, type: 'SOLID' });
-    walls.push({ x: MAP_SIZE - 50, y: cy + 100, w: 50, h: cy - 100, type: 'SOLID' });
-    // Obstacles
-    walls.push({ x: cx - 30, y: cy - 200, w: 60, h: 30, type: 'DESTRUCTIBLE', hp: 80, maxHp: 80 });
-    walls.push({ x: cx - 30, y: cy + 170, w: 60, h: 30, type: 'DESTRUCTIBLE', hp: 80, maxHp: 80 });
-    // Bushes for hiding
-    walls.push({ x: cx - 180, y: cy - 40, w: 60, h: 80, type: 'BUSH' });
-    walls.push({ x: cx + 120, y: cy - 40, w: 60, h: 80, type: 'BUSH' });
-    // Crates with health/boosts
-    const bbDrops: ItemType[] = ['HEALTH', 'SPEED_BOOST', 'HEALTH'];
-    for (let i = 0; i < 3; i++) {
-      walls.push({ x: rand() * (MAP_SIZE - 200) + 100, y: rand() * (MAP_SIZE - 200) + 100, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: bbDrops[i] });
-    }
+    // Goal walls (leave goal openings)
+    walls.push({ x: 0, y: 0, w: 50, h: cy - 90, type: 'SOLID' });
+    walls.push({ x: 0, y: cy + 90, w: 50, h: cy - 90, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 50, y: 0, w: 50, h: cy - 90, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 50, y: cy + 90, w: 50, h: cy - 90, type: 'SOLID' });
+    // Symmetric fortress walls near center
+    walls.push({ x: cx - 40, y: cy - 180, w: 80, h: 25, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    walls.push({ x: cx - 40, y: cy + 155, w: 80, h: 25, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    // Side cover walls (symmetric)
+    walls.push({ x: cx - 200, y: cy - 30, w: 50, h: 60, type: 'SOLID' });
+    walls.push({ x: cx + 150, y: cy - 30, w: 50, h: 60, type: 'SOLID' });
+    // Corner fortress (symmetric)
+    walls.push({ x: 80, y: 80, w: 60, h: 40, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 140, y: 80, w: 60, h: 40, type: 'SOLID' });
+    walls.push({ x: 80, y: MAP_SIZE - 120, w: 60, h: 40, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 140, y: MAP_SIZE - 120, w: 60, h: 40, type: 'SOLID' });
+    // Large symmetric bushes for hiding
+    walls.push({ x: cx - 160, y: cy - 50, w: 70, h: 100, type: 'BUSH' });
+    walls.push({ x: cx + 90, y: cy - 50, w: 70, h: 100, type: 'BUSH' });
+    walls.push({ x: 100, y: cy - 40, w: 50, h: 80, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 150, y: cy - 40, w: 50, h: 80, type: 'BUSH' });
+    // Crates with health/boosts (symmetric)
+    walls.push({ x: cx - 100, y: 100, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'HEALTH' });
+    walls.push({ x: cx + 74, y: 100, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'HEALTH' });
+    walls.push({ x: cx - 100, y: MAP_SIZE - 126, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'SPEED_BOOST' });
+    walls.push({ x: cx + 74, y: MAP_SIZE - 126, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'SPEED_BOOST' });
   } else if (mode === 'GEM_GRAB') {
     const cx = MAP_SIZE / 2, cy = MAP_SIZE / 2;
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2;
-      const dist = 280;
-      walls.push({ x: cx + Math.cos(angle) * dist - 35, y: cy + Math.sin(angle) * dist - 35, w: 70, h: 70, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    // MAZE-LIKE symmetric layout for Gem Grab!
+    // Center gem area with defensive walls
+    walls.push({ x: cx - 80, y: cy - 20, w: 40, h: 40, type: 'DESTRUCTIBLE', hp: 120, maxHp: 120 });
+    walls.push({ x: cx + 40, y: cy - 20, w: 40, h: 40, type: 'DESTRUCTIBLE', hp: 120, maxHp: 120 });
+    // Team base fortress walls (symmetric L-shapes!)
+    walls.push({ x: 50, y: cy - 80, w: 100, h: 25, type: 'SOLID' });
+    walls.push({ x: 50, y: cy - 80, w: 25, h: 160, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 150, y: cy - 80, w: 100, h: 25, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 75, y: cy - 80, w: 25, h: 160, type: 'SOLID' });
+    // Mid-field cover walls (symmetric)
+    walls.push({ x: cx - 150, y: cy - 15, w: 50, h: 30, type: 'SOLID' });
+    walls.push({ x: cx + 100, y: cy - 15, w: 50, h: 30, type: 'SOLID' });
+    walls.push({ x: cx - 20, y: cy - 120, w: 40, h: 50, type: 'SOLID' });
+    walls.push({ x: cx - 20, y: cy + 70, w: 40, h: 50, type: 'SOLID' });
+    // Corner fortress blocks
+    walls.push({ x: 60, y: 60, w: 60, h: 60, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 120, y: 60, w: 60, h: 60, type: 'SOLID' });
+    walls.push({ x: 60, y: MAP_SIZE - 120, w: 60, h: 60, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 120, y: MAP_SIZE - 120, w: 60, h: 60, type: 'SOLID' });
+    // LOTS of grass throughout the map for hiding
+    walls.push({ x: 100, y: cy - 50, w: 70, h: 100, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 170, y: cy - 50, w: 70, h: 100, type: 'BUSH' });
+    walls.push({ x: cx - 50, y: 80, w: 100, h: 70, type: 'BUSH' });
+    walls.push({ x: cx - 50, y: MAP_SIZE - 150, w: 100, h: 70, type: 'BUSH' });
+    walls.push({ x: cx - 150, y: cy - 100, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: cx + 90, y: cy - 100, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: cx - 150, y: cy + 40, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: cx + 90, y: cy + 40, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: 60, y: 150, w: 50, h: 80, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 110, y: 150, w: 50, h: 80, type: 'BUSH' });
+    walls.push({ x: 60, y: MAP_SIZE - 230, w: 50, h: 80, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 110, y: MAP_SIZE - 230, w: 50, h: 80, type: 'BUSH' });
+    // Swamps as tactical obstacles (symmetric)
+    walls.push({ x: 180, y: cy - 40, w: 40, h: 80, type: 'SWAMP' });
+    walls.push({ x: MAP_SIZE - 220, y: cy - 40, w: 40, h: 80, type: 'SWAMP' });
+    // Ponds at corners (symmetric)
+    walls.push({ x: 150, y: 150, w: 50, h: 50, type: 'POND' });
+    walls.push({ x: MAP_SIZE - 200, y: 150, w: 50, h: 50, type: 'POND' });
+    walls.push({ x: 150, y: MAP_SIZE - 200, w: 50, h: 50, type: 'POND' });
+    walls.push({ x: MAP_SIZE - 200, y: MAP_SIZE - 200, w: 50, h: 50, type: 'POND' });
+    // MANY crates with weapons, ammo, power-ups (symmetric!)
+    const ggDrops: ItemType[] = ['HEALTH', 'AMMO', 'WEAPON_SHOTGUN', 'DAMAGE_BOOST', 'HEALTH', 'WEAPON_RIFLE', 'SPEED_BOOST', 'SHIELD'];
+    // Crates near center
+    walls.push({ x: cx - 100, y: cy - 80, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[0] });
+    walls.push({ x: cx + 74, y: cy - 80, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[1] });
+    walls.push({ x: cx - 100, y: cy + 54, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[2] });
+    walls.push({ x: cx + 74, y: cy + 54, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[3] });
+    // Crates at team bases
+    walls.push({ x: 90, y: cy, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[4] });
+    walls.push({ x: MAP_SIZE - 116, y: cy, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[5] });
+    // Crates at corners
+    walls.push({ x: 140, y: 90, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[6] });
+    walls.push({ x: MAP_SIZE - 166, y: 90, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[7] });
+    walls.push({ x: 140, y: MAP_SIZE - 116, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[0] });
+    walls.push({ x: MAP_SIZE - 166, y: MAP_SIZE - 116, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[1] });
+    // Extra crates in corridors
+    walls.push({ x: cx - 50, y: 140, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'AMMO' });
+    walls.push({ x: cx + 24, y: 140, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'HEALTH' });
+    walls.push({ x: cx - 50, y: MAP_SIZE - 166, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'AMMO' });
+    walls.push({ x: cx + 24, y: MAP_SIZE - 166, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: 'HEALTH' });
+  } else if (mode === 'TEAM_DEATHMATCH' || mode === 'GUN_GAME') {
+    const cx = MAP_SIZE / 2, cy = MAP_SIZE / 2;
+    const isGunGame = mode === 'GUN_GAME';
+    // MAZE-LIKE symmetric fortress layout for TDM and Gun Game!
+    // Central arena with complex cover
+    walls.push({ x: cx - 30, y: cy - 30, w: 60, h: 60, type: 'SOLID' });
+    // Maze walls radiating from center (symmetric!)
+    walls.push({ x: cx - 150, y: cy - 15, w: 80, h: 30, type: 'SOLID' });
+    walls.push({ x: cx + 70, y: cy - 15, w: 80, h: 30, type: 'SOLID' });
+    walls.push({ x: cx - 15, y: cy - 150, w: 30, h: 80, type: 'SOLID' });
+    walls.push({ x: cx - 15, y: cy + 70, w: 30, h: 80, type: 'SOLID' });
+    // Corner maze sections (symmetric L-shapes!)
+    walls.push({ x: 60, y: 60, w: 100, h: 25, type: 'SOLID' });
+    walls.push({ x: 60, y: 60, w: 25, h: 100, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 160, y: 60, w: 100, h: 25, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 85, y: 60, w: 25, h: 100, type: 'SOLID' });
+    walls.push({ x: 60, y: MAP_SIZE - 85, w: 100, h: 25, type: 'SOLID' });
+    walls.push({ x: 60, y: MAP_SIZE - 160, w: 25, h: 100, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 160, y: MAP_SIZE - 85, w: 100, h: 25, type: 'SOLID' });
+    walls.push({ x: MAP_SIZE - 85, y: MAP_SIZE - 160, w: 25, h: 100, type: 'SOLID' });
+    // Mid-lane destructible cover
+    walls.push({ x: cx - 200, y: cy - 100, w: 40, h: 80, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    walls.push({ x: cx + 160, y: cy - 100, w: 40, h: 80, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    walls.push({ x: cx - 200, y: cy + 20, w: 40, h: 80, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    walls.push({ x: cx + 160, y: cy + 20, w: 40, h: 80, type: 'DESTRUCTIBLE', hp: 100, maxHp: 100 });
+    // LOTS of grass for ambush (scattered throughout map)
+    walls.push({ x: 100, y: cy - 60, w: 80, h: 120, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 180, y: cy - 60, w: 80, h: 120, type: 'BUSH' });
+    walls.push({ x: cx - 60, y: 80, w: 120, h: 80, type: 'BUSH' });
+    walls.push({ x: cx - 60, y: MAP_SIZE - 160, w: 120, h: 80, type: 'BUSH' });
+    walls.push({ x: 60, y: 180, w: 60, h: 100, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 120, y: 180, w: 60, h: 100, type: 'BUSH' });
+    walls.push({ x: 60, y: MAP_SIZE - 280, w: 60, h: 100, type: 'BUSH' });
+    walls.push({ x: MAP_SIZE - 120, y: MAP_SIZE - 280, w: 60, h: 100, type: 'BUSH' });
+    walls.push({ x: cx - 100, y: cy - 120, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: cx + 40, y: cy - 120, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: cx - 100, y: cy + 60, w: 60, h: 60, type: 'BUSH' });
+    walls.push({ x: cx + 40, y: cy + 60, w: 60, h: 60, type: 'BUSH' });
+    // Swamps in tactical spots
+    walls.push({ x: cx - 150, y: 100, w: 50, h: 50, type: 'SWAMP' });
+    walls.push({ x: cx + 100, y: 100, w: 50, h: 50, type: 'SWAMP' });
+    walls.push({ x: cx - 150, y: MAP_SIZE - 150, w: 50, h: 50, type: 'SWAMP' });
+    walls.push({ x: cx + 100, y: MAP_SIZE - 150, w: 50, h: 50, type: 'SWAMP' });
+    // Small ponds as obstacles
+    walls.push({ x: 200, y: 200, w: 50, h: 50, type: 'POND' });
+    walls.push({ x: MAP_SIZE - 250, y: 200, w: 50, h: 50, type: 'POND' });
+    walls.push({ x: 200, y: MAP_SIZE - 250, w: 50, h: 50, type: 'POND' });
+    walls.push({ x: MAP_SIZE - 250, y: MAP_SIZE - 250, w: 50, h: 50, type: 'POND' });
+    // MANY crates with items throughout the maze!
+    // GUN GAME: No weapons! Only health/shield/boosts. TDM: Include weapons
+    const dropTypes: ItemType[] = isGunGame
+      ? ['HEALTH', 'AMMO', 'SHIELD', 'SPEED_BOOST', 'DAMAGE_BOOST', 'HEALTH', 'SHIELD', 'AMMO', 'HEALTH', 'SPEED_BOOST', 'AMMO', 'HEALTH']
+      : ['HEALTH', 'AMMO', 'WEAPON_SHOTGUN', 'WEAPON_RIFLE', 'WEAPON_MACHINE_GUN', 'SPEED_BOOST', 'DAMAGE_BOOST', 'HEALTH', 'SHIELD', 'WEAPON_BAT', 'AMMO', 'HEALTH'];
+    // Ring of crates around center
+    for (let i = 0; i < dropTypes.length; i++) {
+      const angle = (i / dropTypes.length) * Math.PI * 2;
+      const dist = 220;
+      const x = cx + Math.cos(angle) * dist - 13;
+      const y = cy + Math.sin(angle) * dist - 13;
+      walls.push({ x, y, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: dropTypes[i] });
     }
-    // Bushes for hiding
-    for (let i = 0; i < 4; i++) {
-      const angle = (i / 4) * Math.PI * 2 + 0.4;
-      walls.push({ x: cx + Math.cos(angle) * 180 - 40, y: cy + Math.sin(angle) * 180 - 40, w: 80, h: 80, type: 'BUSH' });
-    }
-    // Crates with various drops
-    const ggDrops: ItemType[] = ['HEALTH', 'AMMO', 'SPEED_BOOST', 'DAMAGE_BOOST'];
-    for (let i = 0; i < 4; i++) {
-      walls.push({ x: rand() * (MAP_SIZE - 200) + 100, y: rand() * (MAP_SIZE - 200) + 100, w: 26, h: 26, type: 'CRATE', hp: 30, maxHp: 30, dropType: ggDrops[i] });
-    }
-  } else if (mode === 'TEAM_DEATHMATCH') {
-    // TDM gets crates for pickups and some cover
-    const numWalls = 6 + Math.floor(rand() * 4);
-    for (let i = 0; i < numWalls; i++) {
-      const x = rand() * (MAP_SIZE - 200) + 100;
-      const y = rand() * (MAP_SIZE - 200) + 100;
-      const w = rand() * 50 + 30;
-      const h = rand() * 50 + 30;
-      walls.push({ x, y, w, h, type: rand() < 0.2 ? 'DESTRUCTIBLE' : 'SOLID', hp: 100, maxHp: 100 });
-    }
-    // Lots of crates with weapons and items
-    const dropTypes: ItemType[] = ['HEALTH', 'HEALTH', 'AMMO', 'AMMO', 'WEAPON_SHOTGUN', 'WEAPON_RIFLE', 'WEAPON_MACHINE_GUN', 'WEAPON_BAT', 'SPEED_BOOST', 'DAMAGE_BOOST'];
-    for (let i = 0; i < 10; i++) {
-    walls.push({
-        x: rand() * (MAP_SIZE - 80) + 40, 
-        y: rand() * (MAP_SIZE - 80) + 40, 
-        w: 28, h: 28, 
-        type: 'CRATE', 
-        hp: 35, maxHp: 35,
-        dropType: dropTypes[Math.floor(rand() * dropTypes.length)]
-      });
-    }
-    // Bushes for hiding (crucial for TDM)
-    for (let i = 0; i < 6; i++) {
-      walls.push({ x: rand() * (MAP_SIZE - 100) + 40, y: rand() * (MAP_SIZE - 100) + 40, w: rand() * 60 + 50, h: rand() * 60 + 50, type: 'BUSH' });
-    }
-    // Big ponds (impassable water) - up to 4x bigger
-    for (let i = 0; i < 2; i++) {
-      walls.push({ x: rand() * (MAP_SIZE - 200) + 60, y: rand() * (MAP_SIZE - 200) + 60, w: rand() * 100 + 80, h: rand() * 100 + 80, type: 'POND' });
-    }
-    // Swamps (slow down players)
-    for (let i = 0; i < 2; i++) {
-      walls.push({ x: rand() * (MAP_SIZE - 120) + 40, y: rand() * (MAP_SIZE - 120) + 40, w: rand() * 60 + 50, h: rand() * 60 + 50, type: 'SWAMP' });
-    }
+    // Extra crates in maze corridors
+    const extraDrops: ItemType[] = isGunGame
+      ? ['HEALTH', 'AMMO', 'SHIELD', 'SPEED_BOOST', 'AMMO', 'HEALTH', 'DAMAGE_BOOST', 'SHIELD']
+      : ['HEALTH', 'AMMO', 'WEAPON_SHOTGUN', 'SPEED_BOOST', 'AMMO', 'HEALTH', 'WEAPON_RIFLE', 'DAMAGE_BOOST'];
+    walls.push({ x: 90, y: cy, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[0] });
+    walls.push({ x: MAP_SIZE - 116, y: cy, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[1] });
+    walls.push({ x: cx, y: 90, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[2] });
+    walls.push({ x: cx, y: MAP_SIZE - 116, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[3] });
+    walls.push({ x: 130, y: 130, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[4] });
+    walls.push({ x: MAP_SIZE - 156, y: 130, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[5] });
+    walls.push({ x: 130, y: MAP_SIZE - 156, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[6] });
+    walls.push({ x: MAP_SIZE - 156, y: MAP_SIZE - 156, w: 26, h: 26, type: 'CRATE', hp: 35, maxHp: 35, dropType: extraDrops[7] });
   } else {
     // Zombie Survival - lots of obstacles and MANY crates
     // Helper to check if position overlaps with existing walls
@@ -222,15 +325,19 @@ const generateMap = (roomId: string, mode: GameMode): Wall[] => {
     if (crateCount < MAX_CRATES) {
       if (placeWall('CRATE', 28, 28, { hp: 30, maxHp: 30, dropType: boostDrops[Math.floor(rand() * boostDrops.length)] })) crateCount++;
     }
-    // Weapon crates (purple tint) - 10 crates, but bat/chainsaw are RARE
-    // Ranged weapons are more common (85%), melee is rare (15%)
-    const rangedWeapons: ItemType[] = ['WEAPON_SHOTGUN', 'WEAPON_RIFLE', 'WEAPON_MACHINE_GUN', 'WEAPON_SHOTGUN', 'WEAPON_RIFLE', 'WEAPON_LANDMINE'];
+    // Weapon crates (purple tint) - 12 crates with ALL weapon types!
+    // Include FLAMETHROWER, ROCKET, GRENADE, LASER, MINIGUN, SNIPER!
+    const allRangedWeapons: ItemType[] = [
+      'WEAPON_SHOTGUN', 'WEAPON_RIFLE', 'WEAPON_MACHINE_GUN', 'WEAPON_SNIPER',
+      'WEAPON_ROCKET', 'WEAPON_GRENADE', 'WEAPON_FLAMETHROWER', 'WEAPON_LASER', 
+      'WEAPON_MINIGUN', 'WEAPON_LANDMINE'
+    ];
     const meleeWeapons: ItemType[] = ['WEAPON_BAT', 'WEAPON_CHAINSAW'];
-    for (let i = 0; i < 10 && crateCount < MAX_CRATES; i++) {
-      const isMelee = rand() < 0.12; // Only 12% chance for melee weapons
+    for (let i = 0; i < 12 && crateCount < MAX_CRATES; i++) {
+      const isMelee = rand() < 0.10; // 10% chance for melee weapons
       const weaponDrop = isMelee 
         ? meleeWeapons[Math.floor(rand() * meleeWeapons.length)]
-        : rangedWeapons[Math.floor(rand() * rangedWeapons.length)];
+        : allRangedWeapons[Math.floor(rand() * allRangedWeapons.length)];
       if (placeWall('CRATE', 28, 28, { hp: 40, maxHp: 40, dropType: weaponDrop })) crateCount++;
     }
     // Bushes (hide in all modes)
@@ -337,16 +444,39 @@ const createPlayer = (id: string, name: string, walls: Wall[], team: Team = 'NON
     id, name, x: pos.x, y: pos.y, rotation: 0, aimRotation: 0, hp: baseHp, maxHp: baseHp, score: 0, kills: 0, deaths: 0,
     color: PLAYER_COLORS[colorIndex % PLAYER_COLORS.length], team, isBot, isZombie: false, dead: false,
     weapons: [createWeapon('PISTOL')], currentWeaponIndex: 0, ping: 0, animFrame: 0, isMoving: false, lastMoveTime: 0,
-    speedBoostUntil: 0, damageBoostUntil: 0, slowedUntil: 0, blurredUntil: 0, stunnedUntil: 0, slimeCoveredUntil: 0, tongueGrabbedBy: null,
+    speedBoostUntil: 0, damageBoostUntil: 0, slowedUntil: 0, blurredUntil: 0, stunnedUntil: 0, slimeCoveredUntil: 0, burningUntil: 0, tongueGrabbedBy: null,
     waveSurvived: 0, gems: 0, hasBall: false, canPickBallAt: 0, respawnAt: 0,
     level: 1, damageMultiplier: diffMult.playerDamageMult, fireRateMultiplier: 1.0, ammoMultiplier: 1.0, inBush: false,
-    shield: 0, maxShield: 50, fireRateBoostUntil: 0, wallKits: 0,
+    bushEnterTime: 0, shield: 0, maxShield: 50, fireRateBoostUntil: 0, wallKits: 0,
+    gunGameRank: 0, gunGameKillsAtRank: 0, killStreak: 0, lastKillTime: 0,
+    reloading: false, reloadStartTime: 0,
   };
+};
+
+// Generate random weapon order for Gun Game mode
+// All weapons included! Explosive weapons have reduced fire rates for optimization
+const generateGunGameWeaponOrder = (): WeaponType[] => {
+  const weapons: WeaponType[] = [
+    'SHOTGUN', 'RIFLE', 'MACHINE_GUN', 'SNIPER', 'MINIGUN',
+    'LASER', 'CHAINSAW', 'BAT', 'ROCKET', 'GRENADE', 'FLAMETHROWER', 'PISTOL'
+  ];
+  // Shuffle using Fisher-Yates (but keep PISTOL for last)
+  const pistolIdx = weapons.indexOf('PISTOL');
+  weapons.splice(pistolIdx, 1);
+  for (let i = weapons.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [weapons[i], weapons[j]] = [weapons[j], weapons[i]];
+  }
+  // PISTOL is always last (final kill with starting weapon!)
+  weapons.push('PISTOL');
+  return weapons;
 };
 
 export const initGame = (hostName: string, roomId: string, roomName: string, settings: GameSettings): GameState => {
   const walls = generateMap(roomId, settings.gameMode);
-  const hostPlayer = createPlayer('host', hostName, walls, settings.gameMode === 'BRAWL_BALL' ? 'RED' : 'NONE', 0, false, settings.difficulty);
+  const isPvpTeamMode = settings.gameMode === 'BRAWL_BALL' || settings.gameMode === 'TEAM_DEATHMATCH' || settings.gameMode === 'GEM_GRAB';
+  const hostTeam = isPvpTeamMode ? 'RED' : 'NONE';
+  const hostPlayer = createPlayer('host', hostName, walls, hostTeam, 0, false, settings.difficulty);
   
   // Apply difficulty to zombie count
   const diffMult = getDifficultyMultipliers(settings.difficulty);
@@ -372,10 +502,56 @@ export const initGame = (hostName: string, roomId: string, roomName: string, set
     // Add bots for 3v3
     for (let i = 0; i < 2; i++) state.players.push(createPlayer(`bot-red-${i}`, `RedBot${i+1}`, walls, 'RED', i + 1, true, settings.difficulty));
     for (let i = 0; i < 3; i++) state.players.push(createPlayer(`bot-blue-${i}`, `BlueBot${i+1}`, walls, 'BLUE', i + 4, true, settings.difficulty));
+  } else if (settings.gameMode === 'TEAM_DEATHMATCH') {
+    // Add bots for 3v3
+    for (let i = 0; i < 2; i++) state.players.push(createPlayer(`bot-red-${i}`, `RedBot${i+1}`, walls, 'RED', i + 1, true, settings.difficulty));
+    for (let i = 0; i < 3; i++) state.players.push(createPlayer(`bot-blue-${i}`, `BlueBot${i+1}`, walls, 'BLUE', i + 4, true, settings.difficulty));
   } else if (settings.gameMode === 'GEM_GRAB') {
     for (let i = 0; i < 12; i++) {
       const pos = getSafePosition(walls);
       state.items.push({ id: uuid(), x: pos.x, y: pos.y, type: 'GEM', rotation: 0, value: 1 });
+    }
+    // Add bots for 3v3
+    for (let i = 0; i < 2; i++) state.players.push(createPlayer(`bot-red-${i}`, `RedBot${i+1}`, walls, 'RED', i + 1, true, settings.difficulty));
+    for (let i = 0; i < 3; i++) state.players.push(createPlayer(`bot-blue-${i}`, `BlueBot${i+1}`, walls, 'BLUE', i + 4, true, settings.difficulty));
+  } else if (settings.gameMode === 'GUN_GAME') {
+    state.gunGameWeaponOrder = generateGunGameWeaponOrder();
+    // In Gun Game, all players start with the first weapon with LOTS of ammo
+    const firstWeapon = state.gunGameWeaponOrder[0];
+    const gunGameWeapon = createWeapon(firstWeapon);
+    // Handle infinite ammo weapons (melee) - don't multiply -1!
+    if (gunGameWeapon.maxAmmo > 0) {
+      gunGameWeapon.ammo = gunGameWeapon.maxAmmo * 5;
+      gunGameWeapon.maxAmmo = gunGameWeapon.maxAmmo * 5;
+    }
+    hostPlayer.weapons = [gunGameWeapon];
+    hostPlayer.gunGameRank = 0;
+    hostPlayer.gunGameKillsAtRank = 0;
+    hostPlayer.team = 'RED'; // Assign team for Gun Game (Red vs Blue)
+    // Add bots for 3v3 (always 6 players)
+    for (let i = 0; i < 2; i++) {
+      const bot = createPlayer(`bot-red-${i}`, `RedBot${i+1}`, walls, 'RED', i + 1, true, settings.difficulty);
+      const botWeapon = createWeapon(firstWeapon);
+      if (botWeapon.maxAmmo > 0) {
+        botWeapon.ammo = botWeapon.maxAmmo * 5;
+        botWeapon.maxAmmo = botWeapon.maxAmmo * 5;
+      }
+      bot.weapons = [botWeapon];
+      bot.gunGameRank = 0;
+      bot.gunGameKillsAtRank = 0;
+      state.players.push(bot);
+    }
+    for (let i = 0; i < 3; i++) {
+      const bot = createPlayer(`bot-blue-${i}`, `BlueBot${i+1}`, walls, 'BLUE', i + 4, true, settings.difficulty);
+      const botWeapon = createWeapon(firstWeapon);
+      if (botWeapon.maxAmmo > 0) {
+        botWeapon.ammo = botWeapon.maxAmmo * 5;
+        botWeapon.maxAmmo = botWeapon.maxAmmo * 5;
+      }
+      bot.weapons = [botWeapon];
+      bot.gunGameRank = 0;
+      bot.gunGameKillsAtRank = 0;
+      state.players.push(bot);
     }
   }
   return state;
@@ -383,14 +559,39 @@ export const initGame = (hostName: string, roomId: string, roomName: string, set
 
 export const addPlayer = (state: GameState, playerId: string, name: string): GameState => {
   let team: Team = 'NONE';
-  if (state.settings.gameMode === 'BRAWL_BALL' || state.settings.gameMode === 'TEAM_DEATHMATCH') {
+  const isPvpTeamMode = state.settings.gameMode === 'BRAWL_BALL' || state.settings.gameMode === 'TEAM_DEATHMATCH' || state.settings.gameMode === 'GEM_GRAB';
+  if (isPvpTeamMode) {
     const redCount = state.players.filter(p => p.team === 'RED' && !p.isBot).length;
     const blueCount = state.players.filter(p => p.team === 'BLUE' && !p.isBot).length;
     team = redCount <= blueCount ? 'RED' : 'BLUE';
     const botToRemove = state.players.find(p => p.isBot && p.team === team);
     if (botToRemove) state.players = state.players.filter(p => p.id !== botToRemove.id);
   }
-  return { ...state, players: [...state.players, createPlayer(playerId, name, state.walls, team, state.players.length, false, state.settings.difficulty)] };
+  
+  const newPlayer = createPlayer(playerId, name, state.walls, team, state.players.length, false, state.settings.difficulty);
+  
+  // Gun Game: Give player the current weapon based on rank (starts at 0) with lots of ammo
+  if (state.settings.gameMode === 'GUN_GAME' && state.gunGameWeaponOrder) {
+    const firstWeapon = state.gunGameWeaponOrder[0];
+    const gunGameWeapon = createWeapon(firstWeapon);
+    // Handle infinite ammo weapons (melee) - don't multiply -1!
+    if (gunGameWeapon.maxAmmo > 0) {
+      gunGameWeapon.ammo = gunGameWeapon.maxAmmo * 5;
+      gunGameWeapon.maxAmmo = gunGameWeapon.maxAmmo * 5;
+    }
+    newPlayer.weapons = [gunGameWeapon];
+    newPlayer.gunGameRank = 0;
+    newPlayer.gunGameKillsAtRank = 0;
+    // Assign to team with fewer players
+    const redCount = state.players.filter(p => p.team === 'RED').length;
+    const blueCount = state.players.filter(p => p.team === 'BLUE').length;
+    newPlayer.team = redCount <= blueCount ? 'RED' : 'BLUE';
+    // Remove a bot from that team if there is one
+    const botToRemove = state.players.find(p => p.isBot && p.team === newPlayer.team);
+    if (botToRemove) state.players = state.players.filter(p => p.id !== botToRemove.id);
+  }
+  
+  return { ...state, players: [...state.players, newPlayer] };
 };
 
 export const removePlayer = (state: GameState, playerId: string): GameState => ({ ...state, players: state.players.filter(p => p.id !== playerId) });
@@ -462,11 +663,19 @@ const lerpAngle = (from: number, to: number, t: number): number => {
   return from + diff * t;
 };
 
-// Smarter AI for Brawl Ball
+// Smarter AI for all PvP modes - OPTIMIZED to reduce lag!
 const updateBotInput = (bot: Player, state: GameState): InputState => {
   const input: InputState = { up: false, down: false, left: false, right: false, fire: false, switchWeapon: false };
   const ball = state.ball;
   const walls = state.walls;
+  
+  // BOT FIRING COOLDOWN - bots only shoot 40% of the time to reduce bullets and lag
+  const botFireChance = 0.4;
+  const canBotFire = Math.random() < botFireChance;
+  
+  // Unique offset for each bot to spread out
+  const botIdx = state.players.filter(p => p.isBot && p.team === bot.team).findIndex(p => p.id === bot.id);
+  const spreadOffset = (botIdx - 1) * 100; // -100, 0, 100 for 3 bots
   
   // Helper to move toward a point while avoiding walls
   const moveToward = (targetX: number, targetY: number, speed: number = 1) => {
@@ -478,7 +687,7 @@ const updateBotInput = (bot: Player, state: GameState): InputState => {
     // Check if direct path is blocked
     const testX = bot.x + (dx / dist) * 30;
     const testY = bot.y + (dy / dist) * 30;
-    const blocked = walls.some(w => w.type !== 'BUSH' && w.type !== 'WATER' &&
+    const blocked = walls.some(w => w.type !== 'BUSH' && w.type !== 'WATER' && w.type !== 'SWAMP' &&
       testX > w.x - PLAYER_RADIUS && testX < w.x + w.w + PLAYER_RADIUS &&
       testY > w.y - PLAYER_RADIUS && testY < w.y + w.h + PLAYER_RADIUS);
     
@@ -498,6 +707,7 @@ const updateBotInput = (bot: Player, state: GameState): InputState => {
 
   if (state.settings.gameMode === 'BRAWL_BALL' && ball) {
     const teammates = state.players.filter(p => p.team === bot.team && p.id !== bot.id && !p.dead);
+    const realTeammates = teammates.filter(p => !p.isBot); // Prioritize passing to real players!
     const enemies = state.players.filter(p => p.team !== bot.team && p.team !== 'NONE' && !p.dead);
     const goalX = bot.team === 'RED' ? MAP_SIZE - 25 : 25;
     const ownGoalX = bot.team === 'RED' ? 25 : MAP_SIZE - 25;
@@ -527,74 +737,248 @@ const updateBotInput = (bot: Player, state: GameState): InputState => {
       const hasClearShot = enemiesBlocking.length === 0;
       
       // PRIORITY 1: Shoot if close to goal OR have clear shot
-      if (distToGoal < 350 || (distToGoal < 500 && hasClearShot)) {
+      if (distToGoal < 300 || (distToGoal < 450 && hasClearShot)) {
         input.fire = true;
         input.mouseX = goalX;
-        input.mouseY = goalCenterY + (Math.random() - 0.5) * 100; // Slight variation
-        // Still move toward goal while shooting
+        input.mouseY = goalCenterY + (Math.random() - 0.5) * 80;
         moveToward(goalX, goalCenterY, 0.7);
       } else {
-        // Check if teammate is in better position to pass
+        // Check if REAL teammate is in position to receive pass (prioritize humans!)
         const nearestEnemy = enemies.reduce((closest, e) => {
           const d = Math.sqrt((e.x - bot.x) ** 2 + (e.y - bot.y) ** 2);
           return d < closest.dist ? { p: e, dist: d } : closest;
         }, { p: null as Player | null, dist: Infinity });
         
-        const betterTeammate = teammates.find(t => {
+        // First check for real player teammate to pass to
+        const realTeammateToPass = realTeammates.find(t => {
           const tDistToGoal = Math.abs(goalX - t.x);
-          const myDistToGoal = distToGoal;
-          return tDistToGoal < myDistToGoal - 150 && Math.sqrt((t.x - bot.x) ** 2 + (t.y - bot.y) ** 2) < 350;
+          const distToT = Math.sqrt((t.x - bot.x) ** 2 + (t.y - bot.y) ** 2);
+          return tDistToGoal < distToGoal && distToT < 400 && distToT > 50;
         });
         
-        if (betterTeammate && nearestEnemy.dist < 120) {
-          // Pass to teammate who is closer to goal
+        // Then check any teammate
+        const betterTeammate = realTeammateToPass || teammates.find(t => {
+          const tDistToGoal = Math.abs(goalX - t.x);
+          const distToT = Math.sqrt((t.x - bot.x) ** 2 + (t.y - bot.y) ** 2);
+          return tDistToGoal < distToGoal - 100 && distToT < 350;
+        });
+        
+        // Pass if enemy is close or if real teammate is open
+        if (betterTeammate && (nearestEnemy.dist < 150 || realTeammateToPass)) {
           input.fire = true;
-          input.mouseX = betterTeammate.x + (goalX > bot.x ? 30 : -30); // Lead the pass
+          input.mouseX = betterTeammate.x + (goalX > bot.x ? 40 : -40);
           input.mouseY = betterTeammate.y;
         } else {
-          // Move toward goal
-          moveToward(goalX, goalCenterY, 0.85);
+          // Dribble toward goal (dodge enemies)
+          const dodgeX = nearestEnemy.p ? (bot.x - nearestEnemy.p.x) * 0.3 : 0;
+          const dodgeY = nearestEnemy.p ? (bot.y - nearestEnemy.p.y) * 0.3 : 0;
+          moveToward(goalX + dodgeX, goalCenterY + dodgeY, 0.85);
         }
       }
     } else if (!ball.heldBy) {
-      // Ball is free
+      // Ball is free - use spread offset to avoid clustering
       if (teammatesCloserToBall === 0) {
         // I'm closest - go for ball
         moveToward(ball.x, ball.y, 1);
       } else if (teammatesCloserToBall === 1) {
-        // Support - stay between ball and goal
-        moveToward((ball.x + goalX) / 2, ball.y, 0.6);
+        // Support - stay between ball and goal with Y offset
+        moveToward((ball.x + goalX) / 2, ball.y + spreadOffset, 0.6);
       } else {
-        // Stay back near own goal
-        moveToward(ownGoalX + (bot.team === 'RED' ? 200 : -200), MAP_SIZE / 2 + (Math.random() - 0.5) * 200, 0.5);
+        // Stay back near own goal with spread
+        moveToward(ownGoalX + (bot.team === 'RED' ? 200 : -200), MAP_SIZE / 2 + spreadOffset, 0.5);
       }
     } else {
       // Someone has the ball
       const holder = state.players.find(p => p.id === ball.heldBy);
       if (holder) {
         if (holder.team === bot.team) {
-          // Teammate has ball - get open for pass
-          moveToward(goalX - (bot.team === 'RED' ? 200 : -200), holder.y + (Math.random() - 0.5) * 300, 0.6);
+          // Teammate has ball - get open for pass with spread
+          moveToward(goalX - (bot.team === 'RED' ? 200 : -200), holder.y + spreadOffset, 0.6);
         } else {
-          // Enemy has ball - defend
+          // Enemy has ball - defend with spread
           const distToHolder = Math.sqrt((holder.x - bot.x) ** 2 + (holder.y - bot.y) ** 2);
           if (distToHolder < 200 || Math.abs(holder.x - ownGoalX) < 300) {
             // Chase and attack
-            moveToward(holder.x, holder.y, 0.9);
+            moveToward(holder.x, holder.y + spreadOffset * 0.3, 0.9);
             if (distToHolder < 150) {
               input.fire = true;
               input.mouseX = holder.x;
               input.mouseY = holder.y;
             }
           } else {
-            // Position between holder and goal
-            moveToward((holder.x + ownGoalX) / 2, holder.y, 0.7);
+            // Position between holder and goal with spread
+            moveToward((holder.x + ownGoalX) / 2, holder.y + spreadOffset, 0.7);
           }
         }
       }
     }
+  } else if (state.settings.gameMode === 'TEAM_DEATHMATCH' || state.settings.gameMode === 'GUN_GAME') {
+    // TDM/Gun Game AI - aggressive combat with team support
+    const enemies = state.players.filter(p => p.team !== bot.team && p.team !== 'NONE' && !p.dead);
+    const teammates = state.players.filter(p => p.team === bot.team && p.id !== bot.id && !p.dead);
+    
+    // Check if bot has melee weapon
+    const currentWeapon = bot.weapons[bot.currentWeaponIndex];
+    const hasMeleeWeapon = currentWeapon && (currentWeapon.type === 'BAT' || currentWeapon.type === 'CHAINSAW');
+    
+    // Find nearest enemy
+    let nearestEnemy: Player | null = null;
+    let minDist = Infinity;
+    for (const e of enemies) {
+      const d = Math.sqrt((e.x - bot.x) ** 2 + (e.y - bot.y) ** 2);
+      if (d < minDist) { minDist = d; nearestEnemy = e; }
+    }
+    
+    // AI should try to pick up items nearby (NO weapons in Gun Game!)
+    const nearbyItems = state.items.filter(i => {
+      const dist = Math.sqrt((i.x - bot.x) ** 2 + (i.y - bot.y) ** 2);
+      const isWeapon = i.type.startsWith('WEAPON_');
+      // Gun Game bots don't pick up weapons
+      if (state.settings.gameMode === 'GUN_GAME' && isWeapon) return false;
+      return dist < 150 && (i.type === 'HEALTH' || i.type === 'SHIELD' || i.type === 'AMMO' || 
+             i.type === 'SPEED_BOOST' || i.type === 'DAMAGE_BOOST' || isWeapon);
+    });
+    
+    // Prioritize item pickup if low health or nearby good item
+    if (nearbyItems.length > 0 && (bot.hp < bot.maxHp * 0.5 || !nearestEnemy || minDist > 300)) {
+      const item = nearbyItems[0];
+      moveToward(item.x, item.y, 1.0);
+    } else if (nearestEnemy) {
+      // Target the enemy
+      input.mouseX = nearestEnemy.x;
+      input.mouseY = nearestEnemy.y;
+      
+      // MELEE WEAPONS: ALWAYS RUSH IN, NEVER BACK AWAY!
+      if (hasMeleeWeapon) {
+        // Aggressive melee combat - CHARGE!
+        moveToward(nearestEnemy.x, nearestEnemy.y, 1.0);
+        input.fire = minDist < 80; // Attack when close
+      } else {
+        // Ranged combat behavior
+        if (minDist > 200) {
+          // Move toward enemy (with slight spread)
+          moveToward(nearestEnemy.x, nearestEnemy.y + spreadOffset * 0.5, 0.85);
+          input.fire = minDist < 400;
+        } else if (minDist < 80) {
+          // Too close for ranged - back away while shooting
+          moveToward(bot.x * 2 - nearestEnemy.x, bot.y * 2 - nearestEnemy.y, 0.7);
+          input.fire = true;
+        } else {
+          // Good range - strafe and shoot
+          const strafeDir = Math.sin(Date.now() / 500 + parseInt(bot.id.slice(-2), 16) || 0);
+          const perpX = -(nearestEnemy.y - bot.y) / minDist * strafeDir * 30;
+          const perpY = (nearestEnemy.x - bot.x) / minDist * strafeDir * 30;
+          moveToward(bot.x + perpX, bot.y + perpY, 0.5);
+          input.fire = true;
+        }
+      }
+    } else {
+      // No enemies - patrol center with spread, look for items
+      const allItems = state.items.filter(i => !i.type.includes('GEM'));
+      if (allItems.length > 0 && Math.random() < 0.3) {
+        const randomItem = allItems[Math.floor(Math.random() * allItems.length)];
+        moveToward(randomItem.x, randomItem.y, 0.5);
+      } else {
+        moveToward(MAP_SIZE / 2, MAP_SIZE / 2 + spreadOffset, 0.4);
+      }
+    }
+  } else if (state.settings.gameMode === 'GEM_GRAB') {
+    // Gem Grab AI - MUCH SMARTER: team defense, chase gem carriers, protect teammates
+    const enemies = state.players.filter(p => p.team !== bot.team && p.team !== 'NONE' && !p.dead);
+    const teammates = state.players.filter(p => p.team === bot.team && p.id !== bot.id && !p.dead);
+    const realTeammates = teammates.filter(p => !p.isBot);
+    const gems = state.items.filter(i => i.type === 'GEM');
+    
+    // Find enemy with most gems (priority target!)
+    let richestEnemy: Player | null = null;
+    let maxEnemyGems = 0;
+    for (const e of enemies) {
+      if (e.gems > maxEnemyGems) { maxEnemyGems = e.gems; richestEnemy = e; }
+    }
+    
+    // Find teammate with most gems (protect them!)
+    let richestTeammate: Player | null = null;
+    let maxTeamGems = 0;
+    for (const t of teammates) {
+      if (t.gems > maxTeamGems) { maxTeamGems = t.gems; richestTeammate = t; }
+    }
+    
+    // Find nearest gem
+    let nearestGem: Item | null = null;
+    let minGemDist = Infinity;
+    for (const g of gems) {
+      const d = Math.sqrt((g.x - bot.x) ** 2 + (g.y - bot.y) ** 2);
+      if (d < minGemDist) { minGemDist = d; nearestGem = g; }
+    }
+    
+    // Find nearest enemy
+    let nearestEnemy: Player | null = null;
+    let minEnemyDist = Infinity;
+    for (const e of enemies) {
+      const d = Math.sqrt((e.x - bot.x) ** 2 + (e.y - bot.y) ** 2);
+      if (d < minEnemyDist) { minEnemyDist = d; nearestEnemy = e; }
+    }
+    
+    // PRIORITY 1: Chase richest enemy if they have 3+ gems
+    if (richestEnemy && maxEnemyGems >= 3) {
+      const distToRich = Math.sqrt((richestEnemy.x - bot.x) ** 2 + (richestEnemy.y - bot.y) ** 2);
+      moveToward(richestEnemy.x, richestEnemy.y + spreadOffset * 0.3, 0.85);
+      if (distToRich < 350) {
+        input.mouseX = richestEnemy.x;
+        input.mouseY = richestEnemy.y;
+        input.fire = true;
+      }
+    }
+    // PRIORITY 2: Defend richest teammate (stay near them) if they have 3+ gems
+    else if (richestTeammate && maxTeamGems >= 3 && bot.gems < maxTeamGems) {
+      const distToTeammate = Math.sqrt((richestTeammate.x - bot.x) ** 2 + (richestTeammate.y - bot.y) ** 2);
+      // Stay within 100-200 units of teammate but spread out
+      if (distToTeammate > 200) {
+        moveToward(richestTeammate.x + spreadOffset, richestTeammate.y, 0.6);
+      } else if (distToTeammate < 80) {
+        // Too close - spread out
+        moveToward(bot.x + spreadOffset * 2, bot.y, 0.4);
+      }
+      // Attack any enemy near the teammate
+      if (nearestEnemy && minEnemyDist < 250) {
+        input.mouseX = nearestEnemy.x;
+        input.mouseY = nearestEnemy.y;
+        input.fire = true;
+      }
+    }
+    // PRIORITY 3: Attack nearby enemies
+    else if (nearestEnemy && minEnemyDist < 180) {
+      input.mouseX = nearestEnemy.x;
+      input.mouseY = nearestEnemy.y;
+      input.fire = true;
+      // Back away while shooting (use spread to avoid clustering)
+      moveToward(bot.x * 2 - nearestEnemy.x + spreadOffset * 0.5, bot.y * 2 - nearestEnemy.y, 0.6);
+    }
+    // PRIORITY 4: Collect gems
+    else if (nearestGem) {
+      moveToward(nearestGem.x, nearestGem.y, 0.9);
+      // Still shoot at enemies in range
+      if (nearestEnemy && minEnemyDist < 350) {
+        input.mouseX = nearestEnemy.x;
+        input.mouseY = nearestEnemy.y;
+        input.fire = true;
+      }
+    }
+    // PRIORITY 5: Hunt enemies
+    else if (nearestEnemy) {
+      moveToward(nearestEnemy.x, nearestEnemy.y + spreadOffset * 0.5, 0.7);
+      input.mouseX = nearestEnemy.x;
+      input.mouseY = nearestEnemy.y;
+      input.fire = minEnemyDist < 350;
+    }
+    // Default: Patrol with spread to avoid clustering
+    else {
+      const patrolX = MAP_SIZE / 2 + Math.sin(Date.now() / 3000 + botIdx * 2) * 150;
+      const patrolY = MAP_SIZE / 2 + spreadOffset;
+      moveToward(patrolX, patrolY, 0.4);
+    }
   } else {
-    // Default combat AI
+    // Default combat AI (Zombie Survival)
     let nearestEnemy: Player | Zombie | null = null;
     let minDist = Infinity;
     for (const p of state.players) {
@@ -614,6 +998,12 @@ const updateBotInput = (bot: Player, state: GameState): InputState => {
       input.mouseY = nearestEnemy.y;
     }
   }
+  
+  // Apply bot firing rate limiter - bots only actually fire 40% of the time
+  if (input.fire && !canBotFire) {
+    input.fire = false;
+  }
+  
   return input;
 };
 
@@ -648,32 +1038,25 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
 
   const alivePlayers = nextPlayers.filter(p => !p.dead);
   
-  // Time-based modes
-  if (state.settings.gameMode === 'GEM_GRAB' || state.settings.gameMode === 'BRAWL_BALL') {
+  // Time-based modes (TDM, GEM_GRAB, BRAWL_BALL)
+  const isTimedMode = state.settings.gameMode === 'GEM_GRAB' || state.settings.gameMode === 'BRAWL_BALL' || state.settings.gameMode === 'TEAM_DEATHMATCH';
+  if (isTimedMode) {
     nextMatchTimeRemaining = state.settings.timeLimit - (now - state.matchStartTime) / 1000;
     if (nextMatchTimeRemaining <= 0 && !showEndScreen) {
       showEndScreen = true;
       endScreenStartTime = now;
       if (state.settings.gameMode === 'GEM_GRAB') {
-        // Find player with most gems
-        let maxGems = -1;
-        let winningPlayer: Player | null = null;
-        nextPlayers.forEach(p => {
-          if (p.gems > maxGems) {
-            maxGems = p.gems;
-            winningPlayer = p;
-          }
-        });
-        // Only tie if EXACTLY equal gems (including 0 vs 0)
-        const playersWithMaxGems = nextPlayers.filter(p => p.gems === maxGems);
-        if (playersWithMaxGems.length > 1 && maxGems > 0) {
-          // Check if different teams
-          const teams = new Set(playersWithMaxGems.map(p => p.team));
-          if (teams.size > 1) winnerTeam = undefined; // True tie between teams
-          else winnerTeam = playersWithMaxGems[0].team;
-        } else if (winningPlayer) {
-          winnerTeam = winningPlayer.team !== 'NONE' ? winningPlayer.team : 'RED'; // Default winner
-        }
+        // Find team with most total gems
+        const redGems = nextPlayers.filter(p => p.team === 'RED').reduce((sum, p) => sum + p.gems, 0);
+        const blueGems = nextPlayers.filter(p => p.team === 'BLUE').reduce((sum, p) => sum + p.gems, 0);
+        if (redGems > blueGems) winnerTeam = 'RED';
+        else if (blueGems > redGems) winnerTeam = 'BLUE';
+        else winnerTeam = undefined; // Tie
+      } else if (state.settings.gameMode === 'TEAM_DEATHMATCH') {
+        // TDM - compare team kills
+        if (nextTeamScores.RED > nextTeamScores.BLUE) winnerTeam = 'RED';
+        else if (nextTeamScores.BLUE > nextTeamScores.RED) winnerTeam = 'BLUE';
+        else winnerTeam = undefined; // Tie
       } else {
         // Brawl Ball - compare team scores directly
         if (nextTeamScores.RED > nextTeamScores.BLUE) winnerTeam = 'RED';
@@ -828,6 +1211,28 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
       nextItems.push({ id: uuid(), x: pos2.x, y: pos2.y, type: 'HEALTH', rotation: 0 });
     }
   }
+  
+  // CRATE REGENERATION for TDM, Gun Game, Gem Grab - spawn new crates when too few
+  if (state.settings.gameMode === 'TEAM_DEATHMATCH' || state.settings.gameMode === 'GUN_GAME' || state.settings.gameMode === 'GEM_GRAB') {
+    const currentCrates = nextWalls.filter(w => w.type === 'CRATE').length;
+    const minCrates = 6;
+    const crateSpawnInterval = 15000; // Spawn new crate every 15 seconds if below min
+    
+    if (currentCrates < minCrates && now % crateSpawnInterval < 50) {
+      const pos = getSafePosition(nextWalls);
+      // Gun Game: NO weapon crates! Only health/shield/boosts
+      const gunGameDrops: ItemType[] = ['HEALTH', 'HEALTH', 'SHIELD', 'AMMO', 'SPEED_BOOST', 'DAMAGE_BOOST'];
+      // Other modes: include some weapons
+      const otherDrops: ItemType[] = ['HEALTH', 'AMMO', 'SHIELD', 'WEAPON_SHOTGUN', 'WEAPON_RIFLE', 'SPEED_BOOST'];
+      const dropTypes = state.settings.gameMode === 'GUN_GAME' ? gunGameDrops : otherDrops;
+      const dropType = dropTypes[Math.floor(Math.random() * dropTypes.length)];
+      
+      nextWalls.push({ 
+        x: pos.x - 13, y: pos.y - 13, w: 26, h: 26, 
+        type: 'CRATE', hp: 30, maxHp: 30, dropType 
+      });
+    }
+  }
 
   nextItems.forEach(item => { item.rotation += 0.05; });
 
@@ -868,6 +1273,30 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
     const weapon = p.weapons[p.currentWeaponIndex];
     const isSlowed = p.slowedUntil > now;
     const isStunned = p.stunnedUntil > now; // STUNNED = can't move or shoot!
+    const isSlimed = p.slimeCoveredUntil > now;
+    
+    // SLIME DAMAGE-OVER-TIME - deals 5 damage per second for 3 seconds!
+    if (isSlimed && !p.dead) {
+      const lastSlimeTick = (p as any).lastSlimeDamageTick || 0;
+      if (now - lastSlimeTick > 500) { // Every 0.5 seconds
+        (p as any).lastSlimeDamageTick = now;
+        p.hp -= 3; // 6 dps for 3 seconds = 18 total
+        nextParticles.push({ id: uuid(), x: p.x + (Math.random()-0.5)*20, y: p.y - 5, vx: 0, vy: -1, life: 0.5, color: '#88ff44', size: 10, type: 'SLIME_DRIP' });
+        if (p.hp <= 0) { p.dead = true; p.deaths++; p.respawnAt = now + 2500; }
+      }
+    }
+    
+    // BURNING DAMAGE - fire boss sets players on fire!
+    const isBurning = (p.burningUntil || 0) > now;
+    if (isBurning && !p.dead) {
+      const lastBurnTick = (p as any).lastBurnDamageTick || 0;
+      if (now - lastBurnTick > 400) { // Every 0.4 seconds = 2.5 dps
+        (p as any).lastBurnDamageTick = now;
+        p.hp -= 4; // 10 dps for 3 seconds = 30 total
+        nextParticles.push({ id: uuid(), x: p.x + (Math.random()-0.5)*15, y: p.y - 10, vx: (Math.random()-0.5)*2, vy: -3, life: 0.4, color: '#ff6622', size: 8, type: 'SMOKE' });
+        if (p.hp <= 0) { p.dead = true; p.deaths++; p.respawnAt = now + 2500; }
+      }
+    }
     
     // Check if in swamp (slows down by 40%)
     const inSwamp = nextWalls.some(w => 
@@ -899,11 +1328,18 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
     } else p.isMoving = false;
 
     // Check if player is in bush (for PvP modes - hidden from enemies)
+    const wasInBush = p.inBush;
     p.inBush = nextWalls.some(w => 
       w.type === 'BUSH' && 
       p.x > w.x - PLAYER_RADIUS && p.x < w.x + w.w + PLAYER_RADIUS &&
       p.y > w.y - PLAYER_RADIUS && p.y < w.y + w.h + PLAYER_RADIUS
     );
+    // Track when player entered bush for complete invisibility after 1.5s
+    if (p.inBush && !wasInBush) {
+      p.bushEnterTime = now;
+    } else if (!p.inBush) {
+      p.bushEnterTime = 0;
+    }
 
       if (input.mouseX !== undefined && input.mouseY !== undefined) {
       p.aimRotation = lerpAngle(p.aimRotation, Math.atan2(input.mouseY - p.y, input.mouseX - p.x), 0.25);
@@ -926,8 +1362,35 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
       }
     }
 
-    // Shooting - STUNNED players can't shoot!
-    if (input.fire && now - weapon.lastShotTime > weapon.fireRate && !isStunned) {
+    // RELOADING MECHANIC
+    const weaponStats = WEAPON_STATS[weapon.type];
+    const reloadTime = weaponStats.reloadTime || 0;
+    
+    // Check if weapon needs reload (only for weapons with limited ammo and reload time)
+    if (weapon.ammo === 0 && weapon.ammo !== -1 && reloadTime > 0 && !p.reloading) {
+      p.reloading = true;
+      p.reloadStartTime = now;
+      nextAnnouncements = addAnnouncement(nextAnnouncements, `🔄 ${p.name} reloading ${weaponStats.name}...`, '#8888ff', reloadTime);
+      audioService.playPickup(); // Reload sound
+    }
+    
+    // Complete reload
+    if (p.reloading && p.reloadStartTime && now - p.reloadStartTime >= reloadTime) {
+      // Get the scaled max ammo
+      const baseMaxAmmo = weaponStats.maxAmmo;
+      const scaledMaxAmmo = Math.round(baseMaxAmmo * Math.min(MAX_WAVE_BONUS, p.ammoMultiplier || 1));
+      weapon.maxAmmo = scaledMaxAmmo;
+      weapon.ammo = scaledMaxAmmo; // Full reload
+      p.reloading = false;
+      p.reloadStartTime = 0;
+      nextAnnouncements = addAnnouncement(nextAnnouncements, `✅ ${p.name} reloaded!`, '#44ff44', 1000);
+    }
+    
+    // Can't shoot while reloading
+    const canShoot = !p.reloading && !isStunned;
+
+    // Shooting - STUNNED/RELOADING players can't shoot!
+    if (input.fire && now - weapon.lastShotTime > weapon.fireRate && canShoot) {
       if (nextBall && nextBall.heldBy === p.id) {
         nextBall.vx = Math.cos(p.aimRotation) * 18;
         nextBall.vy = Math.sin(p.aimRotation) * 18;
@@ -1070,16 +1533,67 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
                 enemy.y += Math.sin(angleToEnemy) * knockback * 0.7;
                 audioService.playPlayerHurt();
                 const respawnTime = state.settings.gameMode === 'BRAWL_BALL' ? 4000 : 2500;
-                if (enemy.hp <= 0) { enemy.dead = true; enemy.deaths++; p.kills++; p.score += 50; enemy.respawnAt = now + respawnTime; }
+                if (enemy.hp <= 0) {
+                  enemy.dead = true; enemy.deaths++; p.kills++; p.score += 50; enemy.respawnAt = now + respawnTime;
+                  // GUN GAME: Melee kills also count for weapon promotion!
+                  if (state.settings.gameMode === 'GUN_GAME' && state.gunGameWeaponOrder) {
+                    p.gunGameKillsAtRank = (p.gunGameKillsAtRank || 0) + 1;
+                    const killsNeeded = 2;
+                    const totalWeapons = state.gunGameWeaponOrder.length;
+                    if (p.gunGameKillsAtRank >= killsNeeded) {
+                      p.gunGameKillsAtRank = 0;
+                      p.gunGameRank = (p.gunGameRank || 0) + 1;
+                      if (p.gunGameRank >= totalWeapons) {
+                        winnerTeam = p.team !== 'NONE' ? p.team : 'RED';
+                        showEndScreen = true; endScreenStartTime = now; gameOver = true;
+                        nextAnnouncements = addAnnouncement(nextAnnouncements, `🏆 ${p.name} WINS GUN GAME!`, '#ffdd00', 5000);
+                      } else {
+                        const nextWeaponType = state.gunGameWeaponOrder[p.gunGameRank];
+                        const nextWeapon = createWeapon(nextWeaponType);
+                        if (nextWeapon.maxAmmo > 0) { nextWeapon.ammo = nextWeapon.maxAmmo * 5; nextWeapon.maxAmmo = nextWeapon.maxAmmo * 5; }
+                        p.weapons = [nextWeapon]; p.currentWeaponIndex = 0;
+                        nextAnnouncements = addAnnouncement(nextAnnouncements, `⬆️ ${p.name} ➜ Lv.${p.gunGameRank + 1}/${totalWeapons}: ${WEAPON_STATS[nextWeaponType].name}!`, '#44ff44', 2500);
+                        audioService.playPickup();
+                      }
+                    }
+                  }
+                  // Kill banner for melee
+                  nextAnnouncements = addAnnouncement(nextAnnouncements, `💀 ${p.name} eliminated ${enemy.name}`, '#ff6666', 2000);
+                }
               }
             }
           });
         } else if (weapon.type === 'LANDMINE') {
-          // LANDMINE - place a mine on the ground in front of the player
+          // LANDMINE - place a mine with FIFO (max 12 mines, oldest explodes when 13th placed)
           const mineX = p.x + Math.cos(p.aimRotation) * (PLAYER_RADIUS + 20);
           const mineY = p.y + Math.sin(p.aimRotation) * (PLAYER_RADIUS + 20);
+          
+          // Check mine count - FIFO: explode oldest if at max
+          const currentMines = nextItems.filter(i => i.type === 'MINE');
+          if (currentMines.length >= MAX_MINES) {
+            // Find oldest mine and explode it
+            const oldestMine = currentMines.reduce((oldest, m) => 
+              (m.spawnTime || 0) < (oldest.spawnTime || 0) ? m : oldest
+            );
+            if (oldestMine) {
+              // Trigger explosion for oldest mine
+              const explosionRadius = 80;
+              for (let k = 0; k < 15; k++) {
+                nextParticles.push({ id: uuid(), x: oldestMine.x, y: oldestMine.y, vx: (Math.random() - 0.5) * 10, vy: (Math.random() - 0.5) * 10, life: 0.6, color: '#ff8800', size: 5, type: 'EXPLOSION' });
+              }
+              // Damage nearby zombies
+              for (let zi = nextZombies.length - 1; zi >= 0; zi--) {
+                const z = nextZombies[zi];
+                const zDist = Math.sqrt((z.x - oldestMine.x) ** 2 + (z.y - oldestMine.y) ** 2);
+                if (zDist < explosionRadius) z.hp -= 80 * (1 - zDist / explosionRadius);
+              }
+              audioService.playExplosion();
+              nextItems = nextItems.filter(i => i.id !== oldestMine.id);
+            }
+          }
+          
           nextItems.push({ 
-          id: uuid(),
+            id: uuid(),
             x: mineX, 
             y: mineY, 
             type: 'MINE', 
@@ -1093,13 +1607,15 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
         } else {
           // Ranged weapons - fire bullets
           const shots = weapon.type === 'SHOTGUN' ? 6 : weapon.type === 'FLAMETHROWER' ? 3 : 1;
+          // Slower bullets and fire rate for BRAWL_BALL (0.55x = much less turnovers!)
+          const soccerSpeedMult = state.settings.gameMode === 'BRAWL_BALL' ? 0.55 : 1;
           for (let i = 0; i < shots; i++) {
             const spread = (Math.random() - 0.5) * weapon.spread;
             const angle = p.aimRotation + spread;
             nextBullets.push({
               id: uuid(), ownerId: p.id, ownerTeam: p.team,
               x: p.x + Math.cos(p.aimRotation) * (PLAYER_RADIUS + 8), y: p.y + Math.sin(p.aimRotation) * (PLAYER_RADIUS + 8),
-              vx: Math.cos(angle) * weapon.speed, vy: Math.sin(angle) * weapon.speed,
+              vx: Math.cos(angle) * weapon.speed * soccerSpeedMult, vy: Math.sin(angle) * weapon.speed * soccerSpeedMult,
               damage, weaponType: weapon.type, life: weapon.type === 'ROCKET' || weapon.type === 'GRENADE' ? 1.5 : 0.7,
               explosionRadius: WEAPON_STATS[weapon.type].explosionRadius,
             });
@@ -1125,9 +1641,9 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
       const dist = Math.sqrt(dx * dx + dy * dy);
       zombie.animFrame = (zombie.animFrame + 0.1) % 4;
       
-      // Spitter ranged attack - VERY VISIBLE projectiles that DON'T penetrate walls
+      // Spitter ranged attack - BUFFED 1.2x rate and damage!
       // MUST CHECK LINE OF SIGHT - don't shoot through walls!
-      if (zombie.type === 'SPITTER' && dist < 225 && dist > 80 && now - zombie.lastProjectileTime > 4000) {
+      if (zombie.type === 'SPITTER' && dist < 200 && dist > 60 && now - zombie.lastProjectileTime > 3300) { // 1.2x faster (4000 -> 3300)
         // LINE OF SIGHT CHECK - Don't shoot through walls!
         const angle = Math.atan2(dy, dx);
         let hasLineOfSight = true;
@@ -1147,12 +1663,12 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
         
         if (hasLineOfSight) {
           zombie.lastProjectileTime = now;
-          // BIG VISIBLE PURPLE PROJECTILE - slow and easy to see!
+          // BIG VISIBLE PURPLE PROJECTILE - 1.2x BUFFED!
           nextBullets.push({ 
             id: uuid(), ownerId: zombie.id, ownerTeam: 'NONE', 
             x: zombie.x, y: zombie.y, 
-            vx: Math.cos(angle) * 3, vy: Math.sin(angle) * 3, // SLOW speed - easy to dodge!
-            damage: 6, // Low damage
+            vx: Math.cos(angle) * 3.5, vy: Math.sin(angle) * 3.5, // Slightly faster
+            damage: 8, // 1.2x damage (6 -> 8)
             weaponType: 'ROCKET', // Use ROCKET for bigger, visible rendering
             life: 3.0, 
             isZombieProjectile: true,
@@ -1167,19 +1683,152 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
         }
       }
       
-      // Healer zombie - heals nearby zombies
-      if (zombie.type === 'HEALER' && now - zombie.lastProjectileTime > 2000) {
-        zombie.lastProjectileTime = now;
-        nextZombies.forEach(z => {
-          if (z.id !== zombie.id) {
-            const healDist = Math.sqrt((z.x - zombie.x) ** 2 + (z.y - zombie.y) ** 2);
-            if (healDist < 150) {
-              z.hp = Math.min(z.maxHp, z.hp + 15);
-              nextParticles.push({ id: uuid(), x: z.x, y: z.y - 10, vx: 0, vy: -1, life: 0.8, color: '#44ff44', size: 12, type: 'TEXT', text: '+15' });
+      // Healer zombie - heals nearby zombies (1.5x stronger!)
+      // STAYS BACK to heal - doesn't chase unless few zombies left!
+      if (zombie.type === 'HEALER') {
+        const nearbyZombies = nextZombies.filter(z => z.id !== zombie.id && Math.sqrt((z.x - zombie.x) ** 2 + (z.y - zombie.y) ** 2) < 250);
+        const fewZombiesLeft = nextZombies.length < 5;
+        
+        // Stay behind other zombies - move AWAY from player if other zombies are between
+        if (!fewZombiesLeft && nearbyZombies.length > 0 && dist < 180) {
+          // Run away from player to heal from safety
+          zombie.rotation = lerpAngle(zombie.rotation, Math.atan2(-dy, -dx), 0.1);
+          const fleePos = resolveWallCollision(
+            zombie.x + Math.cos(zombie.rotation) * zombie.speed * 0.8, 
+            zombie.y + Math.sin(zombie.rotation) * zombie.speed * 0.8, 
+            ZOMBIE_RADIUS * 1.1, nextWalls
+          );
+          zombie.x = fleePos.x; zombie.y = fleePos.y;
+        }
+        
+        // Heal nearby zombies
+        if (now - zombie.lastProjectileTime > 1000) { // Fast healing
+          zombie.lastProjectileTime = now;
+          let healedAny = false;
+          nextZombies.forEach(z => {
+            if (z.id !== zombie.id && z.hp < z.maxHp) {
+              const healDist = Math.sqrt((z.x - zombie.x) ** 2 + (z.y - zombie.y) ** 2);
+              if (healDist < 220) {
+                const healAmount = Math.round(25); // Strong healing
+                z.hp = Math.min(z.maxHp, z.hp + healAmount);
+                nextParticles.push({ id: uuid(), x: z.x, y: z.y - 10, vx: 0, vy: -1, life: 0.8, color: '#44ff44', size: 14, type: 'TEXT', text: `+${healAmount}` });
+                healedAny = true;
+              }
             }
+          });
+          if (healedAny) {
+            nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y, vx: 0, vy: 0, life: 0.6, color: '#44ff44', size: 80, type: 'HEAL_AURA' });
           }
-        });
-        nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y, vx: 0, vy: 0, life: 0.5, color: '#44ff44', size: 60, type: 'HEAL_AURA' });
+        }
+      }
+      
+      // TANK and BOSS JUMP ATTACK - jumps on players dealing massive damage!
+      if ((zombie.type === 'TANK' || zombie.type === 'BOSS') && dist < 300 && dist > 80) {
+        const jumpCooldown = zombie.type === 'BOSS' ? 4000 : 6000;
+        const lastJumpTime = (zombie as any).lastJumpTime || 0;
+        
+        if (now - lastJumpTime > jumpCooldown && !zombie.chargeTarget) {
+          // Start jump - store target position
+          (zombie as any).lastJumpTime = now;
+          (zombie as any).jumpTarget = { x: nearestPlayer.x, y: nearestPlayer.y };
+          (zombie as any).jumpPhase = 'WINDUP';
+          
+          // Warning shadow at landing spot!
+          nextParticles.push({ id: uuid(), x: nearestPlayer.x, y: nearestPlayer.y, vx: 0, vy: 0, life: 1.2, color: 'rgba(0,0,0,0.4)', size: 50, type: 'JUMP_SHADOW' });
+          nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y - 30, vx: 0, vy: -2, life: 1, color: '#ff4444', size: 16, type: 'TEXT', text: '⬆️ JUMP!' });
+        }
+      }
+      
+      // Handle jump animation
+      const jumpTarget = (zombie as any).jumpTarget;
+      const jumpPhase = (zombie as any).jumpPhase;
+      if (jumpTarget && jumpPhase) {
+        const jumpTime = now - ((zombie as any).lastJumpTime || 0);
+        
+        if (jumpPhase === 'WINDUP' && jumpTime > 600) {
+          // Start actual jump
+          (zombie as any).jumpPhase = 'AIRBORNE';
+        } else if (jumpPhase === 'AIRBORNE') {
+          // Move toward target quickly
+          const jdx = jumpTarget.x - zombie.x;
+          const jdy = jumpTarget.y - zombie.y;
+          const jDist = Math.sqrt(jdx * jdx + jdy * jdy);
+          
+          if (jDist > 20) {
+            zombie.x += (jdx / jDist) * 15; // Fast jump
+            zombie.y += (jdy / jDist) * 15;
+          } else {
+            // LANDING! Deal damage
+            (zombie as any).jumpPhase = null;
+            (zombie as any).jumpTarget = null;
+            
+            const landDamage = zombie.type === 'BOSS' ? 80 : 50;
+            const landRadius = zombie.type === 'BOSS' ? 100 : 70;
+            
+            // Damage all players in radius
+            nextPlayers.forEach(p => {
+              if (p.dead) return;
+              const pDist = Math.sqrt((p.x - zombie.x) ** 2 + (p.y - zombie.y) ** 2);
+              if (pDist < landRadius) {
+                const dmgMult = 1 - (pDist / landRadius) * 0.5;
+                applyDamage(p, landDamage * dmgMult, now, 2500);
+                audioService.playPlayerHurt();
+                // Knockback from center
+                const kbAngle = Math.atan2(p.y - zombie.y, p.x - zombie.x);
+                p.x += Math.cos(kbAngle) * 40 * dmgMult;
+                p.y += Math.sin(kbAngle) * 40 * dmgMult;
+              }
+            });
+            
+            // Destroy nearby crates and environment
+            const fireRadius = zombie.type === 'BOSS' ? 120 : 70;
+            for (let wi = nextWalls.length - 1; wi >= 0; wi--) {
+              const w = nextWalls[wi];
+              if ((w.type === 'CRATE' || w.type === 'BARREL' || w.type === 'DESTRUCTIBLE' || w.type === 'ASYLUM_WALL') && w.hp) {
+                const wDist = Math.sqrt((w.x + w.w/2 - zombie.x) ** 2 + (w.y + w.h/2 - zombie.y) ** 2);
+                if (wDist < fireRadius) {
+                  w.hp -= zombie.type === 'BOSS' ? 150 : 100; // Boss does more destruction
+                  if (w.hp <= 0) {
+                    if (w.dropType) nextItems.push({ id: uuid(), x: w.x + w.w/2, y: w.y + w.h/2, type: w.dropType, rotation: 0 });
+                    // Fire destruction particles
+                    for (let k = 0; k < 6; k++) {
+                      nextParticles.push({ id: uuid(), x: w.x + w.w/2, y: w.y + w.h/2, vx: (Math.random()-0.5)*8, vy: (Math.random()-0.5)*8, life: 0.6, color: '#ff6622', size: 6, type: 'SMOKE' });
+                    }
+                    nextWalls.splice(wi, 1);
+                  }
+                }
+              }
+            }
+            
+            // BOSS ONLY: BIG FIRE RING on landing! (This is what makes Boss different from Tank)
+            if (zombie.type === 'BOSS') {
+              // Create a ring of fire particles
+              for (let angle = 0; angle < Math.PI * 2; angle += 0.3) {
+                const ringX = zombie.x + Math.cos(angle) * fireRadius;
+                const ringY = zombie.y + Math.sin(angle) * fireRadius;
+                nextParticles.push({ id: uuid(), x: ringX, y: ringY, vx: Math.cos(angle) * 3, vy: Math.sin(angle) * 3, life: 1.2, color: '#ff4400', size: 12, type: 'SMOKE' });
+              }
+              // Set nearby players on fire!
+              nextPlayers.forEach(p => {
+                if (p.dead) return;
+                const pDist = Math.sqrt((p.x - zombie.x) ** 2 + (p.y - zombie.y) ** 2);
+                if (pDist < fireRadius) {
+                  p.burningUntil = Math.max(p.burningUntil || 0, now + 4000); // 4 seconds of burn!
+                  nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 1, color: '#ff4400', size: 16, type: 'TEXT', text: '🔥 ON FIRE!' });
+                }
+              });
+              // Fire sound
+              audioService.playExplosion();
+            }
+            
+            // Epic landing effect
+            for (let k = 0; k < 25; k++) {
+              nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y, vx: (Math.random()-0.5)*12, vy: (Math.random()-0.5)*12, life: 0.8, color: '#8866aa', size: 8, type: 'DUST' });
+            }
+            nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y - 20, vx: 0, vy: -1, life: 1, color: '#ff4444', size: 20, type: 'TEXT', text: '💥 SLAM!' });
+            audioService.playExplosion();
+          }
+        }
       }
       
       // Charger zombie (BIG RED DEVIL) - improved charging behavior
@@ -1312,72 +1961,86 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
         audioService.playExplosion();
       }
       
-      // Flame boss AND regular BOSS leave DAMAGING fire trails - OPTIMIZED to reduce lag!
-      // Only spawn fire trails every ~1 second, and limit total puddles
-      const firePuddleCount = nextItems.filter(i => i.type === 'VENOM_PUDDLE' && i.value && i.value > 100).length;
+      // FLAME BOSS only - leaves occasional fire trail (BOSS uses jump attack fire instead)
+      // Much simpler and less laggy
       const lastTrailTime = (zombie as any).lastFireTrailTime || 0;
-      if ((zombie.type === 'FLAME_BOSS' || zombie.type === 'BOSS') && zombie.targetId && 
-          now - lastTrailTime > 800 && firePuddleCount < 8) { // Max 8 fire puddles at once
+      if (zombie.type === 'FLAME_BOSS' && zombie.targetId && now - lastTrailTime > 2000) {
         (zombie as any).lastFireTrailTime = now;
         
-        // One simple fire particle (not every frame!)
-        nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y, vx: 0, vy: 0, life: 1.0, color: '#ff4400', size: 15, type: 'SMOKE' });
+        // Simple ember particles
+        for (let e = 0; e < 2; e++) {
+          nextParticles.push({ 
+            id: uuid(), 
+            x: zombie.x + (Math.random() - 0.5) * 20, 
+            y: zombie.y + (Math.random() - 0.5) * 20, 
+            vx: 0, vy: 0, life: 1.0, 
+            color: '#ff6622', size: 6, type: 'SMOKE' 
+          });
+        }
         
-        // Leave a FIRE PUDDLE - only 6 second duration to reduce clutter
-        nextItems.push({ 
-          id: uuid(), 
-          x: zombie.x, 
-          y: zombie.y, 
-          type: 'VENOM_PUDDLE', 
-          rotation: 0, 
-          spawnTime: now, 
-          value: 6000 // 6 seconds duration (shorter to reduce lag)
+        // Set close players on fire
+        nextPlayers.forEach(p => {
+          if (p.dead) return;
+          const pDist = Math.sqrt((p.x - zombie.x) ** 2 + (p.y - zombie.y) ** 2);
+          if (pDist < 45) {
+            p.burningUntil = Math.max(p.burningUntil || 0, now + 3000);
+            nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#ff4400', size: 14, type: 'TEXT', text: '🔥 BURN!' });
+          }
         });
       }
       
-      // WITCH BOSS - Fast spider-like movement, tongue attack like fishing!
+      // WITCH BOSS - NERFED: Slower, shorter tongue, more dodgeable
       if (zombie.type === 'WITCH') {
-        const tongueRange = 250;
+        const tongueRange = 140; // Much shorter: 250 -> 140
         const tongueState = zombie.tongueState || 'AIMING';
         const tongueProgress = zombie.tongueProgress || 0;
         const tongueTarget = zombie.tongueTarget;
         
-        // Spider-like jumping movement when not attacking
+        // Slower spider-like movement when not attacking
         if (tongueState === 'AIMING') {
-          if (dist < tongueRange && dist > 80 && now - zombie.lastProjectileTime > 3000) {
-            // Stop and aim at player
-            zombie.tongueState = 'EXTENDING';
+          if (dist < tongueRange && dist > 60 && now - zombie.lastProjectileTime > 4000) { // Longer cooldown: 3s -> 4s
+            // Stop and aim at player - SHOW WARNING LONGER
+            zombie.tongueState = 'WINDUP'; // Add windup state
             zombie.tongueProgress = 0;
             zombie.tongueTarget = nearestPlayer.id;
             zombie.lastProjectileTime = now;
-            // Warning!
-            nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y - 40, vx: 0, vy: -1, life: 1.2, color: '#8844aa', size: 18, type: 'TEXT', text: '👅 TONGUE!' });
-      } else {
-            // Spider jump movement - fast and erratic
-            const jumpTimer = (now % 800) / 800;
-            if (jumpTimer < 0.15 && Math.random() < 0.3) {
+            // Warning - longer visible!
+            nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y - 40, vx: 0, vy: -1, life: 2, color: '#ff4444', size: 20, type: 'TEXT', text: '⚠️ TONGUE!' });
+          } else {
+            // SLOWER spider movement - less erratic
+            const jumpTimer = (now % 1200) / 1200; // Slower: 800 -> 1200
+            if (jumpTimer < 0.1 && Math.random() < 0.2) { // Less frequent jumps
               // Jump toward player
-              const jumpDir = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.5;
-              const jumpDist = 40 + Math.random() * 30;
+              const jumpDir = Math.atan2(dy, dx) + (Math.random() - 0.5) * 0.3;
+              const jumpDist = 25 + Math.random() * 20; // Shorter jumps: 40-70 -> 25-45
               zombie.x += Math.cos(jumpDir) * jumpDist;
               zombie.y += Math.sin(jumpDir) * jumpDist;
               // Spider particles
-              for (let j = 0; j < 4; j++) {
-                nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y, vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6, life: 0.3, color: '#aa66cc', size: 5, type: 'DUST' });
+              for (let j = 0; j < 3; j++) {
+                nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, life: 0.3, color: '#aa66cc', size: 4, type: 'DUST' });
               }
             }
           }
+        } else if (tongueState === 'WINDUP') {
+          // NEW: Windup state - gives player time to dodge!
+          zombie.tongueProgress = Math.min(1, (zombie.tongueProgress || 0) + 0.03); // Slow windup
+          if (zombie.tongueProgress >= 1) {
+            zombie.tongueState = 'EXTENDING';
+            zombie.tongueProgress = 0;
+            // Flash warning
+            nextParticles.push({ id: uuid(), x: zombie.x, y: zombie.y - 30, vx: 0, vy: -1, life: 0.5, color: '#ff0000', size: 24, type: 'TEXT', text: '👅' });
+          }
         } else if (tongueState === 'EXTENDING') {
-          // Tongue shooting out!
-          zombie.tongueProgress = Math.min(1, (zombie.tongueProgress || 0) + 0.08);
+          // Tongue shooting out! SLOWER: 0.08 -> 0.04
+          zombie.tongueProgress = Math.min(1, (zombie.tongueProgress || 0) + 0.04);
           const target = nextPlayers.find(p => p.id === tongueTarget);
           if (target && !target.dead) {
             const tdx = target.x - zombie.x, tdy = target.y - zombie.y;
             const tDist = Math.sqrt(tdx * tdx + tdy * tdy);
             const tongueReachDist = tongueRange * zombie.tongueProgress!;
             
-            // Check if tongue reached player
-            if (tDist < tongueReachDist + PLAYER_RADIUS && !target.tongueGrabbedBy) {
+            // Check if tongue reached player - slightly smaller hitbox
+            if (tDist < tongueReachDist + PLAYER_RADIUS * 0.8 && !target.tongueGrabbedBy) {
               target.tongueGrabbedBy = zombie.id;
               zombie.tongueState = 'RETRACTING';
               nextParticles.push({ id: uuid(), x: target.x, y: target.y - 20, vx: 0, vy: -1, life: 1, color: '#ff4444', size: 14, type: 'TEXT', text: '🎣 CAUGHT!' });
@@ -1388,8 +2051,8 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
             zombie.tongueProgress = 1;
           }
         } else if (tongueState === 'RETRACTING') {
-          // Pull player back!
-          zombie.tongueProgress = Math.max(0, (zombie.tongueProgress || 1) - 0.06);
+          // Pull player back! SLOWER: 0.06 -> 0.04
+          zombie.tongueProgress = Math.max(0, (zombie.tongueProgress || 1) - 0.04);
           const target = nextPlayers.find(p => p.tongueGrabbedBy === zombie.id);
           if (target && !target.dead) {
             // Pull player toward witch
@@ -1467,21 +2130,74 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
           zombie.y > w.y - ZOMBIE_RADIUS && zombie.y < w.y + w.h + ZOMBIE_RADIUS
         );
         const zombieSpeed = zombie.speed * (zombieInSwamp ? 0.5 : 1);
-        const newPos = resolveWallCollision(zombie.x + Math.cos(zombie.rotation) * zombieSpeed, zombie.y + Math.sin(zombie.rotation) * zombieSpeed, ZOMBIE_RADIUS * ZOMBIE_TYPES[zombie.type].size, nextWalls);
+        const targetX = zombie.x + Math.cos(zombie.rotation) * zombieSpeed;
+        const targetY = zombie.y + Math.sin(zombie.rotation) * zombieSpeed;
+        const newPos = resolveWallCollision(targetX, targetY, ZOMBIE_RADIUS * ZOMBIE_TYPES[zombie.type].size, nextWalls);
+        
+        // Check if blocked by ASYLUM_WALL (player-built walls) - attack them!
+        if (Math.abs(newPos.x - targetX) > 1 || Math.abs(newPos.y - targetY) > 1) {
+          // Zombie is blocked! Check if by an asylum wall
+          for (let wi = nextWalls.length - 1; wi >= 0; wi--) {
+            const w = nextWalls[wi];
+            if (w.type !== 'ASYLUM_WALL') continue;
+            // Check if this wall is blocking us
+            const wallCenterX = w.x + w.w / 2, wallCenterY = w.y + w.h / 2;
+            const wallDist = Math.sqrt((zombie.x - wallCenterX) ** 2 + (zombie.y - wallCenterY) ** 2);
+            if (wallDist < 60 && w.hp) {
+              // Attack this wall!
+              if (now - zombie.lastAttackTime > 800) {
+                zombie.lastAttackTime = now;
+                w.hp -= zombie.attackDamage * 0.5; // Zombies deal half damage to walls
+                nextParticles.push({ id: uuid(), x: w.x + w.w/2, y: w.y + w.h/2, vx: 0, vy: -1, life: 0.5, color: '#ff6644', size: 12, type: 'TEXT', text: `-${Math.round(zombie.attackDamage * 0.5)}` });
+                
+                if (w.hp <= 0) {
+                  // Wall destroyed!
+                  for (let k = 0; k < 8; k++) {
+                    nextParticles.push({ id: uuid(), x: w.x + w.w/2, y: w.y + w.h/2, vx: (Math.random()-0.5)*6, vy: (Math.random()-0.5)*6, life: 0.6, color: '#886644', size: 6, type: 'DUST' });
+                  }
+                  nextParticles.push({ id: uuid(), x: w.x + w.w/2, y: w.y + w.h/2 - 15, vx: 0, vy: -1, life: 1, color: '#ff4444', size: 14, type: 'TEXT', text: '💥 Destroyed!' });
+                  nextWalls.splice(wi, 1);
+                }
+              }
+              break;
+            }
+          }
+        }
+        
         zombie.x = newPos.x; zombie.y = newPos.y;
-      } else if (now - zombie.lastAttackTime > (zombie.isBoss ? 1200 : 900) && zombie.type !== 'HEALER' && zombie.type !== 'CHARGER') {
+      } else if (now - zombie.lastAttackTime > (zombie.isBoss ? 1200 : 900) && zombie.type !== 'HEALER' && zombie.type !== 'CHARGER' && zombie.type !== 'SPITTER') {
         // Healer zombies DON'T attack - they only heal other zombies!
         // Charger zombies only deal damage during charge, not melee!
+        // SPITTER zombies only attack ranged - no melee!
+        
+        // CHECK LINE OF SIGHT FOR MELEE - can't hit through walls!
+        let hasLineOfSight = true;
+        const checkSteps = 5;
+        for (let step = 1; step <= checkSteps; step++) {
+          const checkX = zombie.x + (dx / dist) * (dist * step / checkSteps);
+          const checkY = zombie.y + (dy / dist) * (dist * step / checkSteps);
+          for (const w of nextWalls) {
+            if (w.type === 'BUSH' || w.type === 'WATER' || w.type === 'POND' || w.type === 'SWAMP') continue;
+            if (checkX > w.x && checkX < w.x + w.w && checkY > w.y && checkY < w.y + w.h) {
+              hasLineOfSight = false;
+              break;
+            }
+          }
+          if (!hasLineOfSight) break;
+        }
+        
+        if (hasLineOfSight) {
           const died = applyDamage(nearestPlayer, zombie.attackDamage, now, 2500);
           zombie.lastAttackTime = now;
-        if (zombie.type === 'SLOW') nearestPlayer.slowedUntil = now + 2500;
-        audioService.playPlayerHurt();
+          if (zombie.type === 'SLOW') nearestPlayer.slowedUntil = now + 2500;
+          audioService.playPlayerHurt();
           if (died) {
-          if (state.settings.gameMode === 'GEM_GRAB' && nearestPlayer.gems > 0) {
-            for (let i = 0; i < nearestPlayer.gems; i++) nextItems.push({ id: uuid(), x: nearestPlayer.x + (Math.random() - 0.5) * 40, y: nearestPlayer.y + (Math.random() - 0.5) * 40, type: 'GEM', rotation: 0, value: 1 });
-            nearestPlayer.gems = 0;
+            if (state.settings.gameMode === 'GEM_GRAB' && nearestPlayer.gems > 0) {
+              for (let i = 0; i < nearestPlayer.gems; i++) nextItems.push({ id: uuid(), x: nearestPlayer.x + (Math.random() - 0.5) * 40, y: nearestPlayer.y + (Math.random() - 0.5) * 40, type: 'GEM', rotation: 0, value: 1 });
+              nearestPlayer.gems = 0;
+            }
+            if (nextBall && nextBall.heldBy === nearestPlayer.id) { nextBall.heldBy = null; nearestPlayer.hasBall = false; nextBall.vx = (Math.random() - 0.5) * 8; nextBall.vy = (Math.random() - 0.5) * 8; }
           }
-          if (nextBall && nextBall.heldBy === nearestPlayer.id) { nextBall.heldBy = null; nearestPlayer.hasBall = false; nextBall.vx = (Math.random() - 0.5) * 8; nextBall.vy = (Math.random() - 0.5) * 8; }
         }
       }
     }
@@ -1606,9 +2322,12 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
       }
     }
     
-    // During goal celebration, reset ball to center after 2.5s
-    if (state.goalCelebrationUntil > 0 && now > state.goalCelebrationUntil - 500 && nextBall.x !== MAP_SIZE/2) {
+    // During goal celebration, reset ball to center after 2.5s (only during active celebration!)
+    const isInCelebration = state.goalCelebrationUntil > now;
+    const celebrationEnding = state.goalCelebrationUntil > 0 && now > state.goalCelebrationUntil - 500 && now < state.goalCelebrationUntil;
+    if (celebrationEnding && nextBall.x !== MAP_SIZE/2) {
       nextBall.x = MAP_SIZE / 2; nextBall.y = MAP_SIZE / 2;
+      nextBall.vx = 0; nextBall.vy = 0;
     }
   }
 
@@ -1744,14 +2463,19 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
             nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#44ff44', size: 14, type: 'TEXT', text: `❤️+${actualHeal}` });
           }
           else if (item.type === 'AMMO') {
-            // Refill 60% of max ammo for all weapons (scales with waves!)
+            // In Gun Game, players can't pick up ammo! (they have plenty)
+            if (state.settings.gameMode === 'GUN_GAME') {
+              continue; // Skip ammo pickups in Gun Game
+            }
+            // Refill 60% of BASE max ammo (use WEAPON_STATS, not scaled value to prevent infinite scaling!)
             p.weapons.forEach(w => { 
               if (w.ammo !== -1) {
-                const scaledMaxAmmo = Math.round(w.maxAmmo * (p.ammoMultiplier || 1));
-                const ammoGain = Math.round(scaledMaxAmmo * 0.6);
-                w.ammo = Math.min(scaledMaxAmmo, w.ammo + ammoGain);
-                // Also update maxAmmo to scaled value
-                w.maxAmmo = scaledMaxAmmo;
+                // Use BASE stats from WEAPON_STATS, apply multiplier ONCE
+                const baseMaxAmmo = WEAPON_STATS[w.type].maxAmmo;
+                const scaledMaxAmmo = Math.round(baseMaxAmmo * Math.min(MAX_WAVE_BONUS, p.ammoMultiplier || 1));
+                const ammoGain = Math.round(baseMaxAmmo * 0.6); // Gain based on BASE, not scaled
+                w.maxAmmo = scaledMaxAmmo; // Update max
+                w.ammo = Math.min(scaledMaxAmmo, w.ammo + ammoGain); // Never exceed max!
               }
             });
             nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#ffaa00', size: 14, type: 'TEXT', text: '🔫 AMMO!' });
@@ -1767,10 +2491,20 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
             nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#4488ff', size: 14, type: 'TEXT', text: `🛡️+${shieldGain}` }); 
           }
           else if (item.type === 'FIRE_RATE_BOOST') { p.fireRateBoostUntil = now + 8000; nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#ff8800', size: 14, type: 'TEXT', text: '⚡FAST!' }); }
-          else if (item.type === 'WALL_KIT') { p.wallKits = Math.min(5, p.wallKits + 1); nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#8866aa', size: 14, type: 'TEXT', text: '🧱+1' }); }
+          else if (item.type === 'WALL_KIT') { 
+            p.wallKits = Math.min(8, p.wallKits + 2); // Get 2 wall kits per pickup, max 8
+            nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 1.2, color: '#8866aa', size: 18, type: 'TEXT', text: '🧱 +2 WALLS!' }); 
+            nextAnnouncements = addAnnouncement(nextAnnouncements, `🧱 Wall Kits: ${p.wallKits} (Press E to build)`, '#8866aa', 2500);
+          }
           else if (item.type.startsWith('WEAPON_')) {
+            // In Gun Game, players can't pick up weapons!
+            if (state.settings.gameMode === 'GUN_GAME') {
+              continue; // Skip weapon pickups in Gun Game
+            }
             const wType = item.type.replace('WEAPON_', '') as WeaponType;
-            const scaledMaxAmmo = Math.round(WEAPON_STATS[wType].maxAmmo * (p.ammoMultiplier || 1));
+            const baseMaxAmmo = WEAPON_STATS[wType].maxAmmo;
+            // Cap the multiplier to prevent insane scaling!
+            const scaledMaxAmmo = Math.round(baseMaxAmmo * Math.min(MAX_WAVE_BONUS, p.ammoMultiplier || 1));
             if (!p.weapons.find(w => w.type === wType)) {
               // New weapon - give FULL scaled ammo!
               const newWeapon = createWeapon(wType);
@@ -1779,11 +2513,11 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
               p.weapons.push(newWeapon);
               nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 1, color: '#ff66ff', size: 16, type: 'TEXT', text: `🔫 ${WEAPON_STATS[wType].name}!` });
             } else { 
-              // Already have weapon - refill to SCALED max!
+              // Already have weapon - refill to SCALED max (never exceed!)
               const existing = p.weapons.find(w => w.type === wType); 
               if (existing && existing.ammo !== -1) {
                 existing.maxAmmo = scaledMaxAmmo;
-                existing.ammo = scaledMaxAmmo; // Full refill!
+                existing.ammo = scaledMaxAmmo; // Full refill to CURRENT max
               }
             }
           }
@@ -1986,7 +2720,27 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
             for (let k = 0; k < 3; k++) nextParticles.push({ id: uuid(), x: b.x, y: b.y, vx: (Math.random() - 0.5) * 4, vy: (Math.random() - 0.5) * 4, life: 0.4, color: '#550000', size: 3, type: 'BLOOD' });
         if (z.hp <= 0) {
           const killer = nextPlayers.find(p => p.id === b.ownerId);
-              if (killer) { killer.kills++; killer.score += z.isBoss ? 100 : 15; }
+              if (killer) {
+                killer.kills++; killer.score += z.isBoss ? 100 : 15;
+                // ZOMBIE MODE: Kill streak tracking!
+                if (state.settings.gameMode === 'ZOMBIE_SURVIVAL') {
+                  if (now - killer.lastKillTime < 2000) { // 2 seconds for zombie streak
+                    killer.killStreak++;
+                  } else {
+                    killer.killStreak = 1;
+                  }
+                  killer.lastKillTime = now;
+                  // Kill streak banners for zombie mode!
+                  if (killer.killStreak >= 3) {
+                    const streakNames = ['', '', '', '🔥 KILLING SPREE!', '💀 RAMPAGE!', '⚡ UNSTOPPABLE!', '☠️ GODLIKE!'];
+                    const idx = Math.min(killer.killStreak, streakNames.length - 1);
+                    if (streakNames[idx]) {
+                      nextAnnouncements = addAnnouncement(nextAnnouncements, `${streakNames[idx]} (${killer.killStreak}x)`, '#ffcc00', 1500);
+                      audioService.playWaveComplete();
+                    }
+                  }
+                }
+              }
           nextZombiesKilledThisWave++;
               for (let k = 0; k < 10; k++) nextParticles.push({ id: uuid(), x: z.x, y: z.y, vx: (Math.random() - 0.5) * 7, vy: (Math.random() - 0.5) * 7, life: 0.7, color: '#330000', size: 4, type: 'BLOOD' });
               
@@ -2001,16 +2755,17 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
                 }
                 nextParticles.push({ id: uuid(), x: boomX, y: boomY - 20, vx: 0, vy: -1, life: 1, color: '#88ff44', size: 16, type: 'TEXT', text: '💥 SPLAT!' });
                 
-                // Damage, SLOW, and SLIME (blurry sticky effect) all players in radius!
+                // Damage, SLOW, and SLIME (damage over 3 seconds + green blur) all players in radius!
                 nextPlayers.forEach(p => {
                   if (p.dead) return;
                   const pDist = Math.sqrt((p.x - boomX) ** 2 + (p.y - boomY) ** 2);
                   if (pDist < boomRadius) {
                     const dmgMult = 1 - (pDist / boomRadius) * 0.7;
-                    p.hp -= 15 * dmgMult; // Small damage
-                    p.slowedUntil = Math.max(p.slowedUntil, now + 2500); // 2.5s slow!
-                    p.slimeCoveredUntil = Math.max(p.slimeCoveredUntil, now + 4000); // 4s slime blur!
-                    nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 0.8, color: '#88ff44', size: 12, type: 'TEXT', text: '🐌 SLIMED!' });
+                    p.hp -= 20 * dmgMult; // Initial damage
+                    p.slowedUntil = Math.max(p.slowedUntil, now + 3000); // 3s slow!
+                    p.slimeCoveredUntil = Math.max(p.slimeCoveredUntil, now + 3000); // 3s slime (green blur + DoT)
+                    p.blurredUntil = Math.max(p.blurredUntil, now + 2000); // Partial blur too!
+                    nextParticles.push({ id: uuid(), x: p.x, y: p.y - 15, vx: 0, vy: -1, life: 1, color: '#88ff44', size: 14, type: 'TEXT', text: '🐌 SLIMED!' });
                     if (p.hp <= 0) { p.dead = true; p.deaths++; p.respawnAt = now + 2500; }
                   }
                 });
@@ -2082,7 +2837,69 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
             }
             if (died) {
               const killer = nextPlayers.find(k => k.id === b.ownerId);
-              if (killer && killer.id !== p.id) { killer.kills++; killer.score += 50; if (killer.team !== 'NONE' && state.settings.gameMode === 'TEAM_DEATHMATCH') nextTeamScores[killer.team]++; }
+              if (killer && killer.id !== p.id) {
+                killer.kills++;
+                killer.score += 50;
+                // TDM team score
+                if (killer.team !== 'NONE' && state.settings.gameMode === 'TEAM_DEATHMATCH') nextTeamScores[killer.team]++;
+                
+                // Kill streak tracking!
+                const killStreakTime = 5000; // 5 seconds for kill streak
+                if (now - killer.lastKillTime < killStreakTime) {
+                  killer.killStreak++;
+                } else {
+                  killer.killStreak = 1;
+                }
+                killer.lastKillTime = now;
+                
+                // Kill banners!
+                if (killer.killStreak >= 2) {
+                  const streakNames = ['', '', 'DOUBLE KILL!', 'TRIPLE KILL!', 'QUAD KILL!', 'RAMPAGE!', 'UNSTOPPABLE!', 'GODLIKE!'];
+                  const streakColors = ['', '', '#ffcc00', '#ff9900', '#ff6600', '#ff3300', '#ff00ff', '#ff0000'];
+                  const idx = Math.min(killer.killStreak, streakNames.length - 1);
+                  nextAnnouncements = addAnnouncement(nextAnnouncements, `🔥 ${killer.name}: ${streakNames[idx]}`, streakColors[idx], 2500);
+                  audioService.playWaveComplete(); // Cool sound for streak
+                } else {
+                  // Regular kill banner
+                  nextAnnouncements = addAnnouncement(nextAnnouncements, `💀 ${killer.name} eliminated ${p.name}`, '#ff6666', 2000);
+                }
+                
+                // GUN GAME: Weapon promotion!
+                if (state.settings.gameMode === 'GUN_GAME' && state.gunGameWeaponOrder) {
+                  killer.gunGameKillsAtRank = (killer.gunGameKillsAtRank || 0) + 1;
+                  const killsNeeded = 2; // 2 kills per weapon rank
+                  const totalWeapons = state.gunGameWeaponOrder.length;
+                  const currentRank = killer.gunGameRank || 0;
+                  
+                  if (killer.gunGameKillsAtRank >= killsNeeded) {
+                    killer.gunGameKillsAtRank = 0;
+                    killer.gunGameRank = currentRank + 1;
+                    
+                    // Check for win condition (completed all weapon ranks)
+                    if (killer.gunGameRank >= totalWeapons) {
+                      // WINNER!
+                      winnerTeam = killer.team !== 'NONE' ? killer.team : 'RED';
+                      showEndScreen = true;
+                      endScreenStartTime = now;
+                      gameOver = true;
+                      nextAnnouncements = addAnnouncement(nextAnnouncements, `🏆 ${killer.name} WINS GUN GAME!`, '#ffdd00', 5000);
+                    } else {
+                      // Promote to next weapon with LOTS of ammo!
+                      const nextWeaponType = state.gunGameWeaponOrder[killer.gunGameRank];
+                      const nextWeapon = createWeapon(nextWeaponType);
+                      // Handle infinite ammo weapons (melee) - don't multiply -1!
+                      if (nextWeapon.maxAmmo > 0) {
+                        nextWeapon.ammo = nextWeapon.maxAmmo * 5;
+                        nextWeapon.maxAmmo = nextWeapon.maxAmmo * 5;
+                      }
+                      killer.weapons = [nextWeapon];
+                      killer.currentWeaponIndex = 0;
+                      nextAnnouncements = addAnnouncement(nextAnnouncements, `⬆️ ${killer.name} ➜ Lv.${killer.gunGameRank + 1}/${totalWeapons}: ${WEAPON_STATS[nextWeaponType].name}!`, '#44ff44', 2500);
+                      audioService.playPickup();
+                    }
+                  }
+                }
+              }
               if (state.settings.gameMode === 'GEM_GRAB' && p.gems > 0) {
                 for (let i = 0; i < p.gems; i++) nextItems.push({ id: uuid(), x: p.x + (Math.random() - 0.5) * 35, y: p.y + (Math.random() - 0.5) * 35, type: 'GEM', rotation: 0, value: 1 });
                 p.gems = 0;
@@ -2097,18 +2914,23 @@ export const updateGame = (state: GameState, inputs: Record<string, InputState>,
     if (!hit) survivingBullets.push(b);
   });
 
-  // Particles
+  // Particles - with cap
   const survivingParticles: Particle[] = [];
   nextParticles.forEach(p => {
     p.x += p.vx; p.y += p.vy; p.vx *= 0.95; p.vy *= 0.95; p.life -= 0.02;
-    if (p.life > 0) survivingParticles.push(p);
+    if (p.life > 0 && survivingParticles.length < MAX_PARTICLES) survivingParticles.push(p);
   });
 
   // Clean up destroyed walls (barrels, crates with hp <= 0)
   const cleanedWalls = nextWalls.filter(w => w.hp === undefined || w.hp > 0);
+  
+  // Apply bullet cap - remove oldest bullets if over limit
+  const cappedBullets = survivingBullets.length > MAX_BULLETS 
+    ? survivingBullets.slice(-MAX_BULLETS) 
+    : survivingBullets;
 
   return {
-    ...state, players: nextPlayers, zombies: nextZombies, bullets: survivingBullets, particles: survivingParticles,
+    ...state, players: nextPlayers, zombies: nextZombies, bullets: cappedBullets, particles: survivingParticles,
     items: nextItems, walls: cleanedWalls, ball: nextBall, teamScores: nextTeamScores, gameTime: state.gameTime + dt,
     wave: nextWave, waveState: nextWaveState, waveRestStartTime: nextWaveRestStartTime,
     zombiesKilledThisWave: nextZombiesKilledThisWave, zombiesToSpawnThisWave: nextZombiesToSpawnThisWave,

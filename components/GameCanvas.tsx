@@ -777,11 +777,29 @@ const GameCanvas = forwardRef<HTMLCanvasElement, GameCanvasProps>(({ gameState }
       const isMe = p.id === gameState.myId;
       const sameTeam = me && p.team !== 'NONE' && p.team === me.team;
       
-      // In PvP modes, enemies in bush are hidden (or semi-transparent)
+      // In PvP modes, enemies in bush are hidden
+      // After 1.5 seconds in bush, completely invisible unless we're in the same bush
       let bushHidden = false;
+      let fullyHidden = false;
       if (!isMe && !sameTeam && isPvpMode && p.inBush) {
         bushHidden = true;
+        // Check if in bush for over 1.5 seconds - fully invisible
+        const timeInBush = p.bushEnterTime > 0 ? now - p.bushEnterTime : 0;
+        if (timeInBush > 1500) {
+          // Check if current player is in same bush (within 60 units)
+          if (me && me.inBush) {
+            const distToMe = Math.sqrt((p.x - me.x) ** 2 + (p.y - me.y) ** 2);
+            if (distToMe > 80) {
+              fullyHidden = true; // Different bush - fully invisible
+            }
+          } else {
+            fullyHidden = true; // We're not in bush - they're invisible
+          }
+        }
       }
+      
+      // Don't render fully hidden players at all
+      if (fullyHidden) return;
 
         ctx.save();
         ctx.translate(p.x, p.y);

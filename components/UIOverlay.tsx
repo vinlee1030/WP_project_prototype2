@@ -38,27 +38,28 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
   return (
     <div className="absolute inset-0 pointer-events-none z-40 overflow-hidden">
       
-      {/* ===== ANNOUNCEMENTS BANNER (moved down to avoid cropping) ===== */}
-      <div className="absolute top-10 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 pt-2 z-50" style={{ maxWidth: '90%' }}>
-        {gameState.announcements.map((ann, idx) => {
+      {/* ===== ANNOUNCEMENTS BANNER - Compact, slide in/out one at a time ===== */}
+      <div className="absolute top-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5 z-50" style={{ maxWidth: '85%' }}>
+        {gameState.announcements.slice(-2).map((ann, idx) => { // Show max 2 at once
           const elapsed = Date.now() - ann.startTime;
           const remaining = ann.duration - elapsed;
-          const fadeIn = Math.min(1, elapsed / 200);
-          const fadeOut = remaining < 500 ? remaining / 500 : 1;
-          const opacity = fadeIn * fadeOut;
-          const translateY = idx * 5 + (1 - fadeIn) * 20; // Removed negative offset
+          const slideIn = Math.min(1, elapsed / 150);
+          const slideOut = remaining < 300 ? remaining / 300 : 1;
+          const opacity = slideIn * slideOut;
+          const translateY = -20 * (1 - slideIn) + (idx * 22); // Slide from top
+          const scale = 0.9 + slideIn * 0.1;
           
           return (
             <div 
               key={ann.id}
-              className="px-4 py-2 rounded-lg text-center font-bold shadow-lg pixel-font text-sm whitespace-nowrap"
+              className="px-2 py-1 lg:px-4 lg:py-2 rounded-md text-center font-bold shadow-lg pixel-font text-xs lg:text-sm whitespace-nowrap max-w-[280px] lg:max-w-none truncate"
               style={{ 
-                backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                backgroundColor: 'rgba(0, 0, 0, 0.9)',
                 color: ann.color,
                 opacity,
-                transform: `translateY(${translateY}px)`,
-                transition: 'all 0.2s ease-out',
-                border: `2px solid ${ann.color}40`
+                transform: `translateY(${translateY}px) scale(${scale})`,
+                transition: 'all 0.15s ease-out',
+                border: `1px solid ${ann.color}50`
               }}
             >
               {ann.text}
@@ -85,59 +86,82 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
                 />
               </div>
             </div>
-            {/* Weapon + Ammo */}
+            {/* Weapon + Ammo + Reload */}
             {currentWeapon && (
               <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1">
                 <span className="text-base">{WEAPON_STATS[currentWeapon.type].emoji}</span>
-                <span className="text-amber-400 text-xs font-bold">
-                  {currentWeapon.ammo === -1 ? '∞' : currentWeapon.ammo}
-                </span>
+                {me.reloading ? (
+                  <span className="text-orange-400 text-xs font-bold animate-pulse">🔄</span>
+                ) : (
+                  <span className="text-amber-400 text-xs font-bold">
+                    {currentWeapon.ammo === -1 ? '∞' : currentWeapon.ammo}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* Wall Kits (wave 10+) */}
+            {me.wallKits > 0 && (
+              <div className="bg-purple-800/80 rounded-lg px-2 py-1 flex items-center gap-1 border border-purple-400/50">
+                <span className="text-sm">🧱</span>
+                <span className="text-purple-200 text-xs font-bold">{me.wallKits}</span>
               </div>
             )}
             {/* Buffs inline */}
-            {me.speedBoostUntil > Date.now() && <span className="bg-cyan-500/80 rounded-full w-5 h-5 flex items-center justify-center text-[10px]">⚡</span>}
-            {me.damageBoostUntil > Date.now() && <span className="bg-purple-500/80 rounded-full w-5 h-5 flex items-center justify-center text-[10px]">💪</span>}
-            {me.slowedUntil > Date.now() && <span className="bg-blue-500/80 rounded-full w-5 h-5 flex items-center justify-center text-[10px]">❄️</span>}
+            {me.speedBoostUntil > Date.now() && <span className="bg-cyan-500/80 rounded-full w-6 h-6 flex items-center justify-center text-sm">⚡</span>}
+            {me.damageBoostUntil > Date.now() && <span className="bg-purple-500/80 rounded-full w-6 h-6 flex items-center justify-center text-sm">💪</span>}
+            {me.slowedUntil > Date.now() && <span className="bg-blue-500/80 rounded-full w-6 h-6 flex items-center justify-center text-sm">❄️</span>}
+            {(me.burningUntil || 0) > Date.now() && <span className="bg-orange-500/80 rounded-full w-6 h-6 flex items-center justify-center text-sm">🔥</span>}
           </div>
         )}
 
-        {/* Top Center - Wave/Score/Time with zombie count */}
+        {/* Top Center - Wave/Score/Time with zombie count + Stars/Kills inline */}
         <div className="absolute top-1 left-1/2 -translate-x-1/2" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
           {gameState.settings.gameMode === 'ZOMBIE_SURVIVAL' ? (
-            <div className="bg-black/70 rounded-lg px-3 py-1 flex items-center gap-2">
+            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1.5">
               {gameState.waveState === 'REST' ? (
-                <span className="text-green-400 font-bold text-xs">✓ Next in {restTimeLeft}s</span>
+                <span className="text-green-400 font-bold text-sm">✓ {restTimeLeft}s</span>
               ) : (
                 <>
-                  <span className="text-amber-400 font-bold text-xs">Wave {gameState.wave}</span>
-                  <span className="text-red-400 text-xs">🧟 {gameState.zombies.length}</span>
+                  <span className="text-amber-400 font-bold text-sm">W{gameState.wave}</span>
+                  <span className="text-red-400 text-sm">🧟{gameState.zombies.length}</span>
+                </>
+              )}
+              {/* Stars/Kills inline */}
+              {me && (
+                <>
+                  <span className="text-gray-500 text-xs">|</span>
+                  <span className="text-amber-300 text-sm">⭐{me.score}</span>
+                  <span className="text-red-300 text-sm">☠️{me.kills}</span>
                 </>
               )}
             </div>
           ) : gameState.settings.gameMode === 'BRAWL_BALL' || gameState.settings.gameMode === 'TEAM_DEATHMATCH' ? (
-            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1.5">
+            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1">
               <span className="text-red-500 font-black text-base">{gameState.teamScores.RED}</span>
-              <span className="text-gray-400 text-[10px]">vs</span>
+              <span className="text-gray-400 text-xs">vs</span>
               <span className="text-blue-500 font-black text-base">{gameState.teamScores.BLUE}</span>
-              <span className="text-white text-[10px] ml-1">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</span>
+              <span className="text-white text-sm ml-1">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</span>
             </div>
           ) : gameState.settings.gameMode === 'GEM_GRAB' ? (
-            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1.5">
-              <span className="text-cyan-400 font-bold text-xs">💎 {me?.gems || 0}</span>
-              <span className="text-white text-[10px]">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</span>
+            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1">
+              {/* Team gem totals */}
+              <span className="text-red-400 font-bold text-sm">🔴{gameState.players.filter(p => p.team === 'RED').reduce((sum, p) => sum + p.gems, 0)}</span>
+              <span className="text-gray-400 text-xs">vs</span>
+              <span className="text-blue-400 font-bold text-sm">🔵{gameState.players.filter(p => p.team === 'BLUE').reduce((sum, p) => sum + p.gems, 0)}</span>
+              <span className="text-gray-500 text-xs">|</span>
+              <span className="text-cyan-400 font-bold text-sm">💎{me?.gems || 0}</span>
+              <span className="text-white text-sm">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</span>
+            </div>
+          ) : gameState.settings.gameMode === 'GUN_GAME' ? (
+            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1">
+              <span className="text-amber-400 font-bold text-sm">🔫Lv{(me?.gunGameRank || 0) + 1}</span>
+              <span className="text-green-400 text-sm">{me?.gunGameKillsAtRank || 0}/2</span>
+              <span className="text-red-500 font-black text-sm">{gameState.teamScores.RED}</span>
+              <span className="text-gray-400 text-xs">-</span>
+              <span className="text-blue-500 font-black text-sm">{gameState.teamScores.BLUE}</span>
             </div>
           ) : null}
         </div>
-
-        {/* Top Right - Kills/Score - positioned below host panel with more clearance */}
-        {me && (
-          <div className="absolute top-24 right-1 flex items-center gap-1" style={{ paddingRight: 'env(safe-area-inset-right)' }}>
-            <div className="bg-black/70 rounded-lg px-2 py-1 flex items-center gap-1.5">
-              <span className="text-amber-400 text-xs font-bold">⭐{me.score}</span>
-              <span className="text-red-400 text-xs font-bold">☠️{me.kills}</span>
-            </div>
-          </div>
-        )}
 
         {/* Mobile Chat - minimized by default */}
         <div className="absolute bottom-32 left-2 pointer-events-auto" style={{ paddingLeft: 'env(safe-area-inset-left)' }}>
@@ -152,7 +176,7 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
             <div className="absolute bottom-12 left-0 w-56 bg-slate-900/95 rounded-lg border border-slate-600 overflow-hidden shadow-xl">
               <div className="h-24 overflow-y-auto p-2 space-y-1">
                 {chatMessages.slice(-10).map((msg) => (
-                  <div key={msg.id} className="text-[10px]">
+                  <div key={msg.id} className="text-xs">
                     <span style={{ color: msg.color }} className="font-bold">{msg.sender}: </span>
                     <span className="text-slate-300">{msg.text}</span>
                   </div>
@@ -199,14 +223,18 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
                   <div className="text-base text-white mt-1 font-bold">❤️ {Math.ceil(me.hp)}/{me.maxHp}</div>
                 </div>
 
-                {/* Weapon */}
+                {/* Weapon + Reload */}
                 {currentWeapon && (
                   <div className="text-center border-l border-slate-600 pl-4">
                     <div className="text-3xl">{WEAPON_STATS[currentWeapon.type].emoji}</div>
-                    <div className="text-base text-amber-400 font-bold">
-                      {currentWeapon.ammo === -1 ? '∞' : currentWeapon.ammo}
-                    </div>
-                    <div className="text-[10px] text-slate-400">{WEAPON_STATS[currentWeapon.type].name}</div>
+                    {me.reloading ? (
+                      <div className="text-base text-orange-400 font-bold animate-pulse">🔄 RELOADING</div>
+                    ) : (
+                      <div className="text-base text-amber-400 font-bold">
+                        {currentWeapon.ammo === -1 ? '∞' : currentWeapon.ammo}
+                      </div>
+                    )}
+                    <div className="text-xs text-slate-400">{WEAPON_STATS[currentWeapon.type].name}</div>
                   </div>
                 )}
 
@@ -215,6 +243,15 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
                   <div className="text-center border-l border-slate-600 pl-4">
                     <div className="text-sm text-amber-400 font-bold bg-slate-700 px-2 py-1 rounded">Q</div>
                     <div className="text-sm text-white mt-1">{me.currentWeaponIndex + 1}/{me.weapons.length}</div>
+                  </div>
+                )}
+                
+                {/* Wall Kits (wave 10+) */}
+                {me.wallKits > 0 && (
+                  <div className="text-center border-l border-slate-600 pl-4">
+                    <div className="text-2xl">🧱</div>
+                    <div className="text-sm text-purple-300 font-bold">{me.wallKits}</div>
+                    <div className="text-xs text-slate-400">Press E</div>
                   </div>
                 )}
               </div>
@@ -276,13 +313,42 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
               </div>
             ) : gameState.settings.gameMode === 'GEM_GRAB' ? (
               <div className="flex items-center gap-5">
+                {/* Team Totals */}
                 <div className="text-center">
-                  <div className="text-sm text-slate-400 font-bold">YOUR GEMS</div>
-                  <div className="text-5xl font-black text-cyan-400">💎 {me?.gems || 0}</div>
+                  <div className="text-sm text-slate-400 font-bold">RED TEAM</div>
+                  <div className="text-4xl font-black text-red-500">🔴 {gameState.players.filter(p => p.team === 'RED').reduce((sum, p) => sum + p.gems, 0)}</div>
+                </div>
+                <div className="text-3xl text-slate-500">vs</div>
+                <div className="text-center">
+                  <div className="text-sm text-slate-400 font-bold">BLUE TEAM</div>
+                  <div className="text-4xl font-black text-blue-500">🔵 {gameState.players.filter(p => p.team === 'BLUE').reduce((sum, p) => sum + p.gems, 0)}</div>
+                </div>
+                <div className="border-l border-slate-600 pl-4 text-center">
+                  <div className="text-sm text-slate-400 font-bold">YOU</div>
+                  <div className="text-3xl font-black text-cyan-400">💎 {me?.gems || 0}</div>
                 </div>
                 <div className="border-l border-slate-600 pl-4 text-center">
                   <div className="text-sm text-slate-400 font-bold">TIME</div>
                   <div className="text-3xl font-bold text-white">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</div>
+                </div>
+              </div>
+            ) : gameState.settings.gameMode === 'GUN_GAME' ? (
+              <div className="flex items-center gap-5">
+                <div className="text-center">
+                  <div className="text-sm text-slate-400 font-bold">🔫 GUN GAME</div>
+                  <div className="text-4xl font-black text-amber-400">Lv.{(me?.gunGameRank || 0) + 1}/{gameState.gunGameWeaponOrder?.length || 12}</div>
+                  <div className="text-lg text-green-400 font-bold">{me?.gunGameKillsAtRank || 0}/2 kills</div>
+                </div>
+                <div className="border-l border-slate-600 pl-4">
+                  <div className="text-center">
+                    <div className="text-4xl font-black text-red-500">{gameState.teamScores.RED}</div>
+                    <div className="text-xs text-red-400">RED</div>
+                  </div>
+                </div>
+                <div className="text-slate-500 text-lg font-bold">vs</div>
+                <div className="text-center">
+                  <div className="text-4xl font-black text-blue-500">{gameState.teamScores.BLUE}</div>
+                  <div className="text-xs text-blue-400">BLUE</div>
                 </div>
               </div>
             ) : null}
@@ -309,7 +375,7 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
                     style={{ backgroundColor: p.team !== 'NONE' ? TEAM_COLORS[p.team] : p.color }}
                   />
                   <span className="truncate max-w-[80px] font-medium">{p.name}</span>
-                  {p.isBot && <span className="text-[10px] text-slate-500">🤖</span>}
+                  {p.isBot && <span className="text-xs text-slate-500">🤖</span>}
                 </div>
                 <span className="font-bold text-amber-400 ml-2 text-base">
                   {gameState.settings.gameMode === 'GEM_GRAB' ? p.gems : p.score}

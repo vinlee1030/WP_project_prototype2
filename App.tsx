@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import LoginScreen from './components/LoginScreen';
 import GameCanvas from './components/GameCanvas';
 import UIOverlay from './components/UIOverlay';
+import { DevPanel } from './components/DevPanel';
 import { GameState, InputState, NetMessage, GameSettings, MAX_CONNECTIONS, ChatMessage } from './types';
 import { initGame, updateGame, addPlayer, removePlayer } from './services/gameLogic';
 import { audioService } from './services/audioService';
@@ -16,7 +17,11 @@ const PEER_CONFIG: any = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:global.stun.twilio.com:3478' },
-    ]
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+    ],
+    // Allow candidates from host for same-device connections
+    iceCandidatePoolSize: 10,
   }
 };
 
@@ -150,14 +155,16 @@ const MobileControls: React.FC<{
       {hasMultipleWeapons && (
         <button
           onTouchStart={(e) => { e.stopPropagation(); onSwitchWeapon(); }}
-          className="absolute pointer-events-auto w-11 h-11 bg-amber-500/90 rounded-full border-2 border-amber-300 flex items-center justify-center shadow-lg active:scale-90 active:bg-amber-600 transition-all z-[60]"
+          className="absolute pointer-events-auto w-12 h-12 bg-amber-500/90 rounded-full border-3 border-amber-300 shadow-lg active:scale-90 active:bg-amber-600 transition-all z-[60]"
           style={{ 
             bottom: '130px', 
-            right: 'calc(8% + 56px)',
-            paddingRight: 'env(safe-area-inset-right)'
+            right: 'calc(8% + 56px + env(safe-area-inset-right))',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}
         >
-          <span className="text-xl">🔄</span>
+          <span style={{ fontSize: '24px', lineHeight: 1 }}>🔄</span>
         </button>
       )}
       
@@ -250,6 +257,8 @@ const App: React.FC = () => {
   const [statusMsg, setStatusMsg] = useState('');
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatFocused, setIsChatFocused] = useState(false);
+  const [showDevPanel, setShowDevPanel] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   
   const stateRef = useRef<GameState | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -342,6 +351,8 @@ const App: React.FC = () => {
         peerRef.current = clientPeer;
 
         clientPeer.on('open', () => {
+          setStatusMsg('Connecting to host...');
+          // Simple connection without extra options - matches working prototype 2
           const conn = clientPeer.connect(fullRoomId);
           hostConnRef.current = conn;
           
@@ -460,6 +471,8 @@ const App: React.FC = () => {
       if (e.code === 'KeyD' || e.code === 'ArrowRight') { inputRef.current.right = true; changed = true; }
       if (e.code === 'Space') { inputRef.current.fire = true; changed = true; }
       if (e.code === 'KeyQ') { handleSwitchWeapon(); }
+      if (e.code === 'KeyE') { inputRef.current.buildWall = true; changed = true; } // Build wall
+      if (e.code === 'Escape') { setShowDevPanel(prev => !prev); }
       
       if (changed && hostConnRef.current?.open) {
         hostConnRef.current.send({ type: 'INPUT', input: inputRef.current } as NetMessage);
@@ -477,6 +490,7 @@ const App: React.FC = () => {
       if (e.code === 'KeyA' || e.code === 'ArrowLeft') { inputRef.current.left = false; changed = true; }
       if (e.code === 'KeyD' || e.code === 'ArrowRight') { inputRef.current.right = false; changed = true; }
       if (e.code === 'Space') { inputRef.current.fire = false; changed = true; }
+      if (e.code === 'KeyE') { inputRef.current.buildWall = false; changed = true; }
       
       if (changed && hostConnRef.current?.open) {
         hostConnRef.current.send({ type: 'INPUT', input: inputRef.current } as NetMessage);
@@ -592,22 +606,32 @@ const App: React.FC = () => {
     };
   }, [isPlaying, gameState?.isHost, gameState?.roomId, gameState?.players.length]);
 
-  // Game loop
+  // Game loop with pause support
+  const isPausedRef = useRef(isPaused);
+  isPausedRef.current = isPaused;
+  
   useEffect(() => {
     if (!isPlaying) return;
 
     const loop = (time: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = time;
-      const dt = (time - lastTimeRef.current) / 16.67;
-      lastTimeRef.current = time;
+      
+      // Only update game if not paused (host only - clients receive state from host)
+      if (!isPausedRef.current) {
+        const dt = (time - lastTimeRef.current) / 16.67;
+        lastTimeRef.current = time;
 
-      if (stateRef.current?.isHost) {
-        allInputsRef.current['host'] = inputRef.current;
-        stateRef.current = updateGame(stateRef.current, allInputsRef.current, dt);
-        
-        const updateMsg: NetMessage = { type: 'STATE_UPDATE', state: stateRef.current };
-        connectionsRef.current.forEach(conn => { if (conn.open) conn.send(updateMsg); });
-        setGameState(stateRef.current);
+        if (stateRef.current?.isHost) {
+          allInputsRef.current['host'] = inputRef.current;
+          stateRef.current = updateGame(stateRef.current, allInputsRef.current, dt);
+          
+          const updateMsg: NetMessage = { type: 'STATE_UPDATE', state: stateRef.current };
+          connectionsRef.current.forEach(conn => { if (conn.open) conn.send(updateMsg); });
+          setGameState(stateRef.current);
+        }
+      } else {
+        // Still update last time to prevent huge dt jump when unpaused
+        lastTimeRef.current = time;
       }
       
       reqRef.current = requestAnimationFrame(loop);
@@ -647,26 +671,57 @@ const App: React.FC = () => {
             />
             <MobileControls setInput={setInputState} gameState={gameState} onSwitchWeapon={handleSwitchWeapon} />
             
-            {/* Connection badge with Room ID */}
-            <div className="absolute top-1 right-1 text-xs font-mono pointer-events-auto z-50 bg-slate-900/90 px-3 py-2 rounded-lg border border-slate-600 shadow-lg">
-              <div className={gameState.isHost ? 'text-emerald-400 font-bold' : 'text-sky-400 font-bold'}>
+            {/* Connection badge with Room ID - top right corner with padding */}
+            <div className="absolute top-1 right-0 text-sm font-mono pointer-events-auto z-50 bg-slate-900/90 px-2 py-1 rounded-l-lg border border-slate-600 shadow-lg" style={{ paddingRight: 'env(safe-area-inset-right)' }}>
+              <div className={gameState.isHost ? 'text-emerald-400 font-bold text-xs' : 'text-sky-400 font-bold text-xs'}>
                 {gameState.isHost ? `🏠 HOST` : `📡 CLIENT`}
               </div>
-              <div className="text-amber-400 mt-1">
-                Room: <span className="text-white font-bold select-all">{gameState.roomId}</span>
-              </div>
-              <div className="text-slate-400 text-[10px]">
-                👥 {gameState.players.filter(p => !p.isBot).length}/{8} players
+              <div className="text-amber-400 text-xs">
+                ID: <span className="text-white font-bold select-all">{gameState.roomId}</span>
               </div>
               {gameState.isHost && (
                 <button 
                   onClick={() => navigator.clipboard.writeText(gameState.roomId)}
-                  className="mt-1 px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-[10px] text-slate-300 w-full"
+                  className="mt-0.5 px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs text-slate-300 w-full"
                 >
-                  📋 Copy ID
+                  📋 Copy
                 </button>
               )}
             </div>
+            
+            {/* Developer Settings Button - TOP LEFT area to avoid joystick */}
+            <button
+              onClick={() => setShowDevPanel(true)}
+              className="absolute top-16 z-50 w-10 h-10 bg-purple-700/80 hover:bg-purple-600 rounded-lg transition-all shadow-lg border border-purple-400/50 pointer-events-auto"
+              title="Developer Panel (ESC)"
+              style={{ 
+                left: 'calc(8px + env(safe-area-inset-left))',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              <span style={{ fontSize: '20px', lineHeight: 1 }}>⚙️</span>
+            </button>
+            
+            {/* Pause indicator */}
+            {isPaused && !showDevPanel && (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-40 pointer-events-none">
+                <div className="text-6xl font-black text-white drop-shadow-2xl animate-pulse bg-black/50 px-8 py-4 rounded-2xl">
+                  ⏸️ PAUSED
+                </div>
+              </div>
+            )}
+            
+            {/* Developer Panel Modal */}
+            {showDevPanel && gameState && (
+              <DevPanel 
+                gameState={gameState}
+                isPaused={isPaused}
+                onTogglePause={() => setIsPaused(p => !p)}
+                onClose={() => setShowDevPanel(false)}
+              />
+            )}
             
             {/* End screen */}
             {gameState.showEndScreen && (

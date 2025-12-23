@@ -140,11 +140,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onJoin }) => {
     onJoin(name, room.id, room.name, settings);
   };
 
-  const gameModeInfo = {
+  const gameModeInfo: Record<GameMode, { name: string; desc: string; color: string; emoji: string }> = {
     'ZOMBIE_SURVIVAL': { name: '🧟 Zombie', desc: 'Survive waves!', color: 'from-green-600 to-emerald-800', emoji: '🧟' },
     'TEAM_DEATHMATCH': { name: '⚔️ TDM', desc: 'Team battle!', color: 'from-red-600 to-orange-700', emoji: '⚔️' },
     'GEM_GRAB': { name: '💎 Gems', desc: 'Grab gems!', color: 'from-cyan-600 to-blue-700', emoji: '💎' },
     'BRAWL_BALL': { name: '⚽ Ball', desc: 'Score goals!', color: 'from-purple-600 to-pink-700', emoji: '⚽' },
+    'GUN_GAME': { name: '🔫 Gun Game', desc: 'Climb the ranks!', color: 'from-amber-600 to-yellow-700', emoji: '🔫' },
   };
 
   return (
@@ -253,20 +254,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onJoin }) => {
             {/* Game Mode */}
             <div>
               <label className="block text-xs font-bold text-slate-400 mb-1.5">Game Mode</label>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-5 gap-1">
                 {(Object.keys(gameModeInfo) as GameMode[]).map((mode) => (
                   <button
                     key={mode}
                     type="button"
                     onClick={() => setGameMode(mode)}
-                    className={`p-2 rounded-lg border-2 transition-all text-center ${
+                    className={`p-1.5 rounded-lg border-2 transition-all text-center ${
                       gameMode === mode 
                         ? `bg-gradient-to-r ${gameModeInfo[mode].color} border-white/30 shadow-md` 
                         : 'bg-slate-700/50 border-slate-600 hover:border-slate-500'
                     }`}
                   >
-                    <div className="text-xl">{gameModeInfo[mode].emoji}</div>
-                    <div className="font-bold text-white text-[10px]">{gameModeInfo[mode].name}</div>
+                    <div className="text-lg">{gameModeInfo[mode].emoji}</div>
+                    <div className="font-bold text-white text-[10px] leading-tight">{gameModeInfo[mode].name}</div>
                   </button>
                 ))}
               </div>
@@ -279,7 +280,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onJoin }) => {
                 <div className="flex gap-1">
                   {(['EASY', 'NORMAL', 'HARD', 'NIGHTMARE'] as const).map((diff) => (
                     <button key={diff} type="button" onClick={() => setDifficulty(diff)}
-                      className={`flex-1 py-1.5 px-1 rounded text-[10px] font-bold transition-all ${
+                      className={`flex-1 py-1.5 px-1 rounded text-xs font-bold transition-all ${
                         difficulty === diff
                           ? diff === 'EASY' ? 'bg-green-600 text-white' : diff === 'NORMAL' ? 'bg-yellow-600 text-white' : diff === 'HARD' ? 'bg-orange-600 text-white' : 'bg-red-600 text-white'
                           : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
@@ -302,7 +303,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onJoin }) => {
                 </button>
                 {showAdvanced && (
                   <div className="mt-2 p-2 bg-slate-900/50 rounded-lg border border-slate-700">
-                    <label className="block text-[10px] text-slate-400 mb-1">Max Zombies: {maxZombies}</label>
+                    <label className="block text-xs text-slate-400 mb-1">Max Zombies: {maxZombies}</label>
                     <input type="range" min="10" max="50" value={maxZombies} onChange={(e) => setMaxZombies(Number(e.target.value))}
                       className="w-full accent-amber-500"
                     />
@@ -339,7 +340,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onJoin }) => {
           </div>
         </div>
 
-        <div className="mt-2 text-center text-[10px] text-slate-600">P2P WebRTC • Room ID shown in top-right</div>
+        <div className="mt-2 text-center text-xs text-slate-600">P2P WebRTC • Room ID shown in top-right</div>
       </div>
     </div>
   );
