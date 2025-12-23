@@ -671,23 +671,23 @@ const App: React.FC = () => {
             />
             <MobileControls setInput={setInputState} gameState={gameState} onSwitchWeapon={handleSwitchWeapon} />
             
-            {/* Connection badge - Mobile: top right, Desktop: top right but with space for UI */}
-            <div className="absolute top-1 right-0 lg:top-3 lg:right-3 text-sm font-mono pointer-events-auto z-50 bg-slate-900/95 px-2 py-1 lg:px-3 lg:py-2 rounded-l-lg lg:rounded-xl border border-slate-600 shadow-lg" style={{ paddingRight: 'env(safe-area-inset-right)' }}>
-              <div className={gameState.isHost ? 'text-emerald-400 font-bold text-xs lg:text-sm' : 'text-sky-400 font-bold text-xs lg:text-sm'}>
-                {gameState.isHost ? `🏠 HOST` : `📡 CLIENT`}
-              </div>
-              <div className="text-amber-400 text-xs lg:text-sm">
-                Room: <span className="text-white font-bold select-all">{gameState.roomId}</span>
-              </div>
-              <div className="text-slate-400 text-xs">
-                👥 {gameState.players.length}/8
+            {/* Connection badge - Compact on both mobile & desktop */}
+            <div className="absolute top-1 right-0 lg:top-2 lg:right-2 text-xs font-mono pointer-events-auto z-50 bg-slate-900/95 px-2 py-1 rounded-l-lg lg:rounded-lg border border-slate-600 shadow-lg" style={{ paddingRight: 'env(safe-area-inset-right)' }}>
+              <div className="flex items-center gap-2">
+                <span className={gameState.isHost ? 'text-emerald-400 font-bold' : 'text-sky-400 font-bold'}>
+                  {gameState.isHost ? `🏠` : `📡`}
+                </span>
+                <span className="text-amber-400">
+                  <span className="text-white font-bold select-all">{gameState.roomId}</span>
+                </span>
+                <span className="text-slate-400">👥{gameState.players.length}</span>
               </div>
               {gameState.isHost && (
                 <button 
                   onClick={() => navigator.clipboard.writeText(gameState.roomId)}
-                  className="mt-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs lg:text-sm text-slate-300 w-full"
+                  className="mt-1 px-2 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs text-slate-300 w-full"
                 >
-                  📋 Copy ID
+                  📋 Copy
                 </button>
               )}
             </div>

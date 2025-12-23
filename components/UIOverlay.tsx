@@ -38,40 +38,30 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
   return (
     <div className="absolute inset-0 pointer-events-none z-40 overflow-hidden">
       
-      {/* ===== ANNOUNCEMENTS BANNER - Compact, one at a time ===== */}
-      <div className="absolute top-8 lg:top-24 left-1/2 -translate-x-1/2 z-50" style={{ maxWidth: isMobile ? '220px' : '400px' }}>
-        {gameState.announcements.slice(-1).map((ann) => { // Only show latest
+      {/* ===== ANNOUNCEMENTS BANNER - Below wave panel ===== */}
+      <div className="absolute top-8 lg:top-32 left-1/2 -translate-x-1/2 z-50" style={{ maxWidth: isMobile ? '220px' : '350px' }}>
+        {gameState.announcements.slice(-1).map((ann) => {
           const elapsed = Date.now() - ann.startTime;
           const remaining = ann.duration - elapsed;
           const slideIn = Math.min(1, elapsed / 150);
           const slideOut = remaining < 300 ? remaining / 300 : 1;
           const opacity = slideIn * slideOut;
-          const translateY = -15 * (1 - slideIn);
           
-          // Shorten text for mobile: Replace "kills" and "eliminated" with icons
           let displayText = ann.text;
           if (isMobile) {
-            displayText = displayText
-              .replace(/killed/gi, '🔫')
-              .replace(/kills/gi, '🔫')
-              .replace(/eliminated/gi, '💀');
+            displayText = displayText.replace(/killed/gi, '🔫').replace(/kills/gi, '🔫').replace(/eliminated/gi, '💀');
           }
           
           return (
             <div 
               key={ann.id}
-              className="px-3 py-1.5 lg:px-5 lg:py-2 rounded-lg text-center font-bold shadow-xl"
+              className="px-3 py-1.5 lg:px-4 lg:py-1.5 rounded-lg text-center font-bold shadow-xl"
               style={{ 
                 backgroundColor: 'rgba(0, 0, 0, 0.95)',
                 color: ann.color,
                 opacity,
-                transform: `translateY(${translateY}px)`,
-                transition: 'all 0.15s ease-out',
                 border: `2px solid ${ann.color}`,
-                fontSize: isMobile ? '11px' : '16px',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis'
+                fontSize: isMobile ? '11px' : '14px',
               }}
             >
               {displayText}
@@ -215,173 +205,136 @@ const UIOverlay: React.FC<UIOverlayProps> = ({ gameState, chatMessages, onSendMe
       {/* ===== DESKTOP UI (Full panels - NO OVERLAPS) ===== */}
       <div className="hidden lg:block">
         
-        {/* TOP LEFT: Player Stats Panel */}
+        {/* TOP LEFT: Player Stats - Compact horizontal bar */}
         {me && (
-          <div className="absolute top-3 left-3 bg-slate-900/95 backdrop-blur-sm rounded-xl p-4 border border-slate-600 shadow-xl" style={{ maxWidth: '320px' }}>
-            {/* HP Bar */}
-            <div className="mb-3">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-lg font-bold text-white">❤️ {Math.ceil(me.hp)}/{me.maxHp}</span>
-                {me.shield > 0 && <span className="text-cyan-400 font-bold">🛡️ {Math.ceil(me.shield)}</span>}
+          <div className="absolute top-2 left-2 bg-slate-900/95 backdrop-blur-sm rounded-xl px-4 py-2 border border-slate-600 shadow-xl">
+            <div className="flex items-center gap-4">
+              {/* HP */}
+              <div className="flex items-center gap-2">
+                <span className="text-red-500">❤️</span>
+                <div className="w-28 h-3 bg-slate-700 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full rounded-full transition-all"
+                    style={{ 
+                      width: `${(me.hp / me.maxHp) * 100}%`,
+                      backgroundColor: me.hp > 50 ? '#22c55e' : me.hp > 25 ? '#eab308' : '#ef4444'
+                    }}
+                  />
+                </div>
+                <span className="text-white font-bold text-sm">{Math.ceil(me.hp)}</span>
+                {me.shield > 0 && <span className="text-cyan-400 text-sm">🛡️{Math.ceil(me.shield)}</span>}
               </div>
-              <div className="w-full h-4 bg-slate-700 rounded-full overflow-hidden border border-slate-600">
-                <div 
-                  className="h-full transition-all duration-200 rounded-full"
-                  style={{ 
-                    width: `${(me.hp / me.maxHp) * 100}%`,
-                    backgroundColor: me.hp > 50 ? '#22c55e' : me.hp > 25 ? '#eab308' : '#ef4444'
-                  }}
-                />
-              </div>
-            </div>
 
-            {/* Weapon Info */}
-            <div className="flex items-center gap-4 py-2 border-t border-slate-700">
+              {/* Weapon */}
               {currentWeapon && (
-                <div className="flex items-center gap-3">
-                  <span className="text-4xl">{WEAPON_STATS[currentWeapon.type].emoji}</span>
+                <div className="flex items-center gap-2 border-l border-slate-600 pl-3">
+                  <span className="text-2xl">{WEAPON_STATS[currentWeapon.type].emoji}</span>
                   <div>
-                    <div className="text-lg font-bold text-white">{WEAPON_STATS[currentWeapon.type].name}</div>
+                    <div className="text-sm font-bold text-white">{WEAPON_STATS[currentWeapon.type].name}</div>
                     {me.reloading ? (
-                      <div className="text-orange-400 font-bold animate-pulse">🔄 RELOADING...</div>
+                      <span className="text-orange-400 text-xs font-bold animate-pulse">🔄 RELOAD</span>
                     ) : (
-                      <div className="text-amber-400 font-bold text-xl">
-                        {currentWeapon.ammo === -1 ? '∞' : currentWeapon.ammo} ammo
-                      </div>
+                      <span className="text-amber-400 font-bold">{currentWeapon.ammo === -1 ? '∞' : currentWeapon.ammo}</span>
                     )}
                   </div>
                 </div>
               )}
               
               {me.weapons.length > 1 && (
-                <div className="border-l border-slate-600 pl-3 text-center">
-                  <div className="text-amber-400 font-bold bg-slate-700 px-2 py-1 rounded text-lg">Q</div>
-                  <div className="text-xs text-slate-400 mt-1">{me.currentWeaponIndex + 1}/{me.weapons.length}</div>
+                <div className="border-l border-slate-600 pl-2">
+                  <span className="text-amber-400 font-bold bg-slate-700 px-1.5 py-0.5 rounded text-sm">Q</span>
+                  <span className="text-slate-400 text-xs ml-1">{me.currentWeaponIndex + 1}/{me.weapons.length}</span>
                 </div>
               )}
               
               {me.wallKits > 0 && (
-                <div className="border-l border-slate-600 pl-3 text-center">
-                  <div className="text-2xl">🧱</div>
-                  <div className="text-purple-300 font-bold">{me.wallKits}</div>
-                </div>
+                <span className="text-purple-300 font-bold">🧱{me.wallKits}</span>
               )}
-            </div>
 
-            {/* Stats */}
-            <div className="flex gap-4 mt-2 text-base border-t border-slate-700 pt-2">
-              <span className="text-white">⚔️ <span className="font-bold">{me.kills}</span></span>
-              <span className="text-amber-400">⭐ <span className="font-bold">{me.score}</span></span>
-              {gameState.settings.gameMode === 'GEM_GRAB' && (
-                <span className="text-cyan-400">💎 <span className="font-bold">{me.gems}</span></span>
-              )}
-            </div>
-
-            {/* Buffs */}
-            {(me.speedBoostUntil > Date.now() || me.damageBoostUntil > Date.now() || me.slowedUntil > Date.now()) && (
-              <div className="flex gap-2 mt-2 flex-wrap">
-                {me.speedBoostUntil > Date.now() && <span className="text-xs px-2 py-1 bg-cyan-600/50 rounded text-cyan-200 font-bold">⚡ SPEED</span>}
-                {me.damageBoostUntil > Date.now() && <span className="text-xs px-2 py-1 bg-purple-600/50 rounded text-purple-200 font-bold">💥 DMG UP</span>}
-                {me.slowedUntil > Date.now() && <span className="text-xs px-2 py-1 bg-blue-600/50 rounded text-blue-200 font-bold">❄️ SLOW</span>}
+              {/* Stats */}
+              <div className="flex gap-2 border-l border-slate-600 pl-3 text-sm">
+                <span className="text-white">⚔️{me.kills}</span>
+                <span className="text-amber-400">⭐{me.score}</span>
               </div>
-            )}
+
+              {/* Buffs */}
+              {me.speedBoostUntil > Date.now() && <span className="bg-cyan-600/50 rounded px-1 text-xs text-cyan-200">⚡</span>}
+              {me.damageBoostUntil > Date.now() && <span className="bg-purple-600/50 rounded px-1 text-xs text-purple-200">💥</span>}
+              {me.slowedUntil > Date.now() && <span className="bg-blue-600/50 rounded px-1 text-xs text-blue-200">❄️</span>}
+            </div>
           </div>
         )}
 
-        {/* TOP CENTER: Wave/Mode Info */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-sm rounded-xl px-8 py-4 border border-slate-600 shadow-xl">
+        {/* TOP CENTER: Wave/Mode Info - COMPACT */}
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur-sm rounded-xl px-5 py-2 border border-slate-600 shadow-xl">
           {gameState.settings.gameMode === 'ZOMBIE_SURVIVAL' ? (
-            <div className="text-center">
+            <div className="flex items-center gap-4">
               {gameState.waveState === 'REST' ? (
                 <>
-                  <div className="text-green-400 font-bold text-lg">✅ WAVE COMPLETE!</div>
-                  <div className="text-5xl font-black text-green-400">{restTimeLeft}s</div>
-                  <div className="text-slate-400">Next: Wave {gameState.wave + 1}</div>
+                  <span className="text-green-400 font-bold">✅ COMPLETE</span>
+                  <span className="text-3xl font-black text-green-400">{restTimeLeft}s</span>
                 </>
               ) : (
                 <>
-                  <div className="text-slate-400 font-bold">WAVE</div>
-                  <div className="text-6xl font-black text-amber-400">{gameState.wave}</div>
-                  <div className="text-red-400 font-bold text-lg">🧟 {gameState.zombies.length} zombies</div>
+                  <div className="text-center">
+                    <div className="text-xs text-slate-400">WAVE</div>
+                    <div className="text-3xl font-black text-amber-400">{gameState.wave}</div>
+                  </div>
+                  <div className="text-red-400 font-bold">🧟 {gameState.zombies.length}</div>
                 </>
               )}
             </div>
           ) : gameState.settings.gameMode === 'BRAWL_BALL' || gameState.settings.gameMode === 'TEAM_DEATHMATCH' ? (
-            <div className="flex items-center gap-6">
-              <div className="text-center">
-                <div className="text-5xl font-black text-red-500">{gameState.teamScores.RED}</div>
-                <div className="text-red-400 font-bold">RED</div>
-              </div>
-              <div className="text-slate-500 text-2xl font-bold">vs</div>
-              <div className="text-center">
-                <div className="text-5xl font-black text-blue-500">{gameState.teamScores.BLUE}</div>
-                <div className="text-blue-400 font-bold">BLUE</div>
-              </div>
-              <div className="border-l border-slate-600 pl-4 text-center">
-                <div className="text-4xl font-bold text-white">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</div>
-              </div>
+            <div className="flex items-center gap-4">
+              <span className="text-3xl font-black text-red-500">{gameState.teamScores.RED}</span>
+              <span className="text-slate-500 font-bold">vs</span>
+              <span className="text-3xl font-black text-blue-500">{gameState.teamScores.BLUE}</span>
+              <span className="text-2xl font-bold text-white ml-2">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</span>
             </div>
           ) : gameState.settings.gameMode === 'GEM_GRAB' ? (
-            <div className="flex items-center gap-5">
-              <div className="text-center">
-                <div className="text-4xl font-black text-red-500">🔴 {gameState.players.filter(p => p.team === 'RED').reduce((sum, p) => sum + p.gems, 0)}</div>
-                <div className="text-red-400 text-sm">RED TEAM</div>
-              </div>
-              <div className="text-2xl text-slate-500">vs</div>
-              <div className="text-center">
-                <div className="text-4xl font-black text-blue-500">🔵 {gameState.players.filter(p => p.team === 'BLUE').reduce((sum, p) => sum + p.gems, 0)}</div>
-                <div className="text-blue-400 text-sm">BLUE TEAM</div>
-              </div>
-              <div className="border-l border-slate-600 pl-4 text-center">
-                <div className="text-3xl font-black text-cyan-400">💎 {me?.gems || 0}</div>
-                <div className="text-xl text-white font-bold">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</div>
-              </div>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl font-black text-red-500">🔴{gameState.players.filter(p => p.team === 'RED').reduce((sum, p) => sum + p.gems, 0)}</span>
+              <span className="text-slate-500">vs</span>
+              <span className="text-2xl font-black text-blue-500">🔵{gameState.players.filter(p => p.team === 'BLUE').reduce((sum, p) => sum + p.gems, 0)}</span>
+              <span className="text-xl font-black text-cyan-400 ml-1">💎{me?.gems || 0}</span>
+              <span className="text-lg text-white font-bold">{Math.max(0, Math.floor(gameState.matchTimeRemaining))}s</span>
             </div>
           ) : gameState.settings.gameMode === 'GUN_GAME' ? (
-            <div className="flex items-center gap-5">
+            <div className="flex items-center gap-4">
               <div className="text-center">
-                <div className="text-slate-400 font-bold">🔫 GUN GAME</div>
-                <div className="text-4xl font-black text-amber-400">Lv.{(me?.gunGameRank || 0) + 1}/{gameState.gunGameWeaponOrder?.length || 12}</div>
-                <div className="text-green-400 font-bold">{me?.gunGameKillsAtRank || 0}/2 kills</div>
+                <div className="text-xs text-slate-400">🔫 LEVEL</div>
+                <div className="text-2xl font-black text-amber-400">{(me?.gunGameRank || 0) + 1}/{gameState.gunGameWeaponOrder?.length || 12}</div>
               </div>
-              <div className="border-l border-slate-600 pl-4 flex items-center gap-3">
-                <div className="text-center">
-                  <div className="text-3xl font-black text-red-500">{gameState.teamScores.RED}</div>
-                  <div className="text-xs text-red-400">RED</div>
-                </div>
-                <span className="text-slate-500">vs</span>
-                <div className="text-center">
-                  <div className="text-3xl font-black text-blue-500">{gameState.teamScores.BLUE}</div>
-                  <div className="text-xs text-blue-400">BLUE</div>
-                </div>
-              </div>
+              <div className="text-green-400 font-bold">{me?.gunGameKillsAtRank || 0}/2</div>
+              <span className="text-2xl font-black text-red-500">{gameState.teamScores.RED}</span>
+              <span className="text-slate-500">-</span>
+              <span className="text-2xl font-black text-blue-500">{gameState.teamScores.BLUE}</span>
             </div>
           ) : null}
         </div>
 
-        {/* RIGHT SIDE: Scoreboard - BELOW the HOST badge area */}
-        <div className="absolute top-24 right-3 bg-slate-900/95 backdrop-blur-sm rounded-xl p-4 border border-slate-600 shadow-xl w-56">
-          <div className="text-lg text-white mb-3 text-center font-bold border-b border-slate-600 pb-2">
+        {/* RIGHT MARGIN: Scoreboard - positioned in the side margin */}
+        <div className="absolute top-1/2 -translate-y-1/2 right-2 bg-slate-900/95 backdrop-blur-sm rounded-xl p-3 border border-slate-600 shadow-xl w-44">
+          <div className="text-sm text-white mb-2 text-center font-bold border-b border-slate-600 pb-1">
             {gameState.settings.gameMode === 'GEM_GRAB' ? '💎 GEMS' : '🏆 SCORE'}
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1">
             {sortedPlayers.slice(0, 5).map((p, i) => (
               <div 
                 key={p.id}
-                className={`flex items-center justify-between px-2 py-2 rounded-lg ${
-                  p.id === gameState.myId ? 'bg-amber-500/30 border border-amber-500/50' : 'bg-slate-800/60'
+                className={`flex items-center justify-between px-1.5 py-1 rounded text-sm ${
+                  p.id === gameState.myId ? 'bg-amber-500/30 border border-amber-500/50' : 'bg-slate-800/50'
                 }`}
               >
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 w-5 font-bold">{i + 1}.</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-400 w-4 font-bold text-xs">{i + 1}.</span>
                   <span 
-                    className="w-4 h-4 rounded-full flex-shrink-0 border border-white/30"
+                    className="w-3 h-3 rounded-full flex-shrink-0"
                     style={{ backgroundColor: p.team !== 'NONE' ? TEAM_COLORS[p.team] : p.color }}
                   />
-                  <span className="truncate max-w-[70px] text-white font-medium">{p.name}</span>
-                  {p.isBot && <span className="text-slate-500">🤖</span>}
+                  <span className="truncate max-w-[50px] text-white text-xs">{p.name}</span>
                 </div>
-                <span className="font-bold text-amber-400 text-lg">
+                <span className="font-bold text-amber-400">
                   {gameState.settings.gameMode === 'GEM_GRAB' ? p.gems : p.score}
                 </span>
               </div>
