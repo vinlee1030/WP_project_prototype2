@@ -671,37 +671,34 @@ const App: React.FC = () => {
             />
             <MobileControls setInput={setInputState} gameState={gameState} onSwitchWeapon={handleSwitchWeapon} />
             
-            {/* Connection badge with Room ID - top right corner with padding */}
-            <div className="absolute top-1 right-0 text-sm font-mono pointer-events-auto z-50 bg-slate-900/90 px-2 py-1 rounded-l-lg border border-slate-600 shadow-lg" style={{ paddingRight: 'env(safe-area-inset-right)' }}>
-              <div className={gameState.isHost ? 'text-emerald-400 font-bold text-xs' : 'text-sky-400 font-bold text-xs'}>
+            {/* Connection badge - Mobile: top right, Desktop: top right but with space for UI */}
+            <div className="absolute top-1 right-0 lg:top-3 lg:right-3 text-sm font-mono pointer-events-auto z-50 bg-slate-900/95 px-2 py-1 lg:px-3 lg:py-2 rounded-l-lg lg:rounded-xl border border-slate-600 shadow-lg" style={{ paddingRight: 'env(safe-area-inset-right)' }}>
+              <div className={gameState.isHost ? 'text-emerald-400 font-bold text-xs lg:text-sm' : 'text-sky-400 font-bold text-xs lg:text-sm'}>
                 {gameState.isHost ? `🏠 HOST` : `📡 CLIENT`}
               </div>
-              <div className="text-amber-400 text-xs">
-                ID: <span className="text-white font-bold select-all">{gameState.roomId}</span>
+              <div className="text-amber-400 text-xs lg:text-sm">
+                Room: <span className="text-white font-bold select-all">{gameState.roomId}</span>
+              </div>
+              <div className="text-slate-400 text-xs">
+                👥 {gameState.players.length}/8
               </div>
               {gameState.isHost && (
                 <button 
                   onClick={() => navigator.clipboard.writeText(gameState.roomId)}
-                  className="mt-0.5 px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 rounded text-xs text-slate-300 w-full"
+                  className="mt-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-xs lg:text-sm text-slate-300 w-full"
                 >
-                  📋 Copy
+                  📋 Copy ID
                 </button>
               )}
             </div>
             
-            {/* Developer Settings Button - TOP LEFT area to avoid joystick */}
+            {/* Developer Settings Button - Mobile: top left below status, Desktop: bottom right */}
             <button
               onClick={() => setShowDevPanel(true)}
-              className="absolute top-16 z-50 w-10 h-10 bg-purple-700/80 hover:bg-purple-600 rounded-lg transition-all shadow-lg border border-purple-400/50 pointer-events-auto"
+              className="absolute z-50 w-10 h-10 lg:w-12 lg:h-12 bg-purple-700/80 hover:bg-purple-600 rounded-xl transition-all shadow-lg border border-purple-400/50 pointer-events-auto flex items-center justify-center top-16 left-2 lg:top-auto lg:left-auto lg:bottom-20 lg:right-4"
               title="Developer Panel (ESC)"
-              style={{ 
-                left: 'calc(8px + env(safe-area-inset-left))',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
             >
-              <span style={{ fontSize: '20px', lineHeight: 1 }}>⚙️</span>
+              <span className="text-xl lg:text-2xl">⚙️</span>
             </button>
             
             {/* Pause indicator */}

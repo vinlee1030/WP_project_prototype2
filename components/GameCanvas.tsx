@@ -1137,11 +1137,11 @@ const GameCanvas = forwardRef<HTMLCanvasElement, GameCanvasProps>(({ gameState }
 
     ctx.restore();
 
-    // Minimap - positioned in top-left corner for both views (avoids UI overlap)
-    const mmScale = isMobile ? 0.06 : 0.08;
+    // Minimap - Desktop: bottom-left to avoid UI overlap, Mobile: top-left below status
+    const mmScale = isMobile ? 0.06 : 0.10;
     const mmSize = MAP_SIZE * mmScale;
-    const mmX = isMobile ? 12 : 8; // Slightly more right on mobile
-    const mmY = isMobile ? 120 : 50; // More down on mobile to avoid cropping
+    const mmX = isMobile ? 12 : 16; 
+    const mmY = isMobile ? 120 : canvas.height - mmSize - 80; // Desktop: bottom-left, above controls
     
     ctx.fillStyle = 'rgba(10, 20, 30, 0.9)';
     ctx.fillRect(mmX - 2, mmY - 2, mmSize + 4, mmSize + 4);
